@@ -14,7 +14,8 @@ These custom ComfyUI nodes let you quickly load one or multiple images through t
 
 ## Nodes
 ### Load Selected Images (List)
-Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images: you can click on an image to switch from the tile view to a full image view. Clicking the X returns you to the tile view, while the numbering in the bottom-right corner allows you to switch between images. <br>
+Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your ``input`` folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images: you can click on an image to switch from the tile view to a full image view. Clicking the X returns you to the tile view, while the numbering in the bottom-right corner allows you to switch between images. <br>
+The node includes a ``max_images`` property that defines how many images can be loaded. If set to 0 or left empty, the number of allowed images is unlimited. <br>
 <b>The images are returned as an image list, allowing downstream nodes to process them one after another.</b> <br>
 <img width="1196" height="646" alt="Image" src="https://github.com/user-attachments/assets/111df53e-4f31-4320-80d7-81a61d57f0b0" />
 
