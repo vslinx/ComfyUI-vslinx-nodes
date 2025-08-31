@@ -1,19 +1,20 @@
 import os, json
-from typing import List
+from typing import List, Tuple
 import numpy as np
 from PIL import Image, ImageOps
 import torch
 
 try:
-    from comfy.utils import get_comfy_path
+    from folder_paths import get_input_directory
 except Exception:
-    get_comfy_path = None
+    get_input_directory = None
 
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".ppm")
 
 def _input_root() -> str:
-    base = get_comfy_path() if get_comfy_path else os.getcwd()
-    return os.path.join(base, "input")
+    if get_input_directory:
+        return os.path.abspath(get_input_directory())
+    return os.path.abspath(os.path.join(os.getcwd(), "input"))
 
 def _pil_to_tensor_bhwc(img: Image.Image) -> torch.Tensor:
     img = ImageOps.exif_transpose(img)
@@ -30,9 +31,52 @@ def _resize_like(img: Image.Image, w: int, h: int) -> Image.Image:
         return img
     return img.resize((w, h), Image.LANCZOS)
 
+def _parse_paths(s: str) -> List[str]:
+    s = (s or "").strip()
+    if not s:
+        return []
+    try:
+        data = json.loads(s)
+        if isinstance(data, list):
+            return [str(x) for x in data]
+    except Exception:
+        pass
+    return [line.strip() for line in s.splitlines() if line.strip()]
+
+def _resolve_existing(rels: List[str]) -> Tuple[List[str], List[str]]:
+    """
+    Resolve relative paths against the input root, clamp to root,
+    and keep only files that exist and have known image extensions.
+    Returns (existing_abs_paths, missing_rel_paths).
+    """
+    root = os.path.abspath(_input_root()) + os.sep
+    existing: List[str] = []
+    missing: List[str] = []
+    for rel in rels:
+        ext_ok = os.path.splitext(rel)[1].lower() in IMG_EXTS
+        abs_path = os.path.abspath(os.path.join(root, rel))
+        in_root = abs_path.startswith(root)
+        if not (ext_ok and in_root and os.path.isfile(abs_path)):
+            missing.append(rel)
+            continue
+        existing.append(abs_path)
+    return existing, missing
+
+def _fail_if_needed(existing_count: int, missing: List[str], fail_if_empty: bool, node_name: str):
+    if fail_if_empty and existing_count == 0:
+        hint = ""
+        if missing:
+            if len(missing) <= 5:
+                hint = " Missing: " + ", ".join(missing)
+            else:
+                hint = f" Missing {len(missing)} paths (first 5): " + ", ".join(missing[:5])
+        raise RuntimeError(
+            f"{node_name}: No valid images found. They may have been moved or deleted from the input folder.{hint}"
+        )
+
 class VSLinx_LoadSelectedImagesList:
     """
-    Reads image files listed in `selected_paths` (relative to ComfyUI/input)
+    Reads files listed in `selected_paths` (relative to ComfyUI input dir)
     and outputs an IMAGE **list** where each item is BHWC with B=1.
     """
 
@@ -43,8 +87,9 @@ class VSLinx_LoadSelectedImagesList:
                 "selected_paths": ("STRING", {
                     "multiline": True,
                     "default": "",
-                    "placeholder": "Filled by the 'Pick images' button (JSON array)."
+                    "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
+                "fail_if_empty": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -54,40 +99,31 @@ class VSLinx_LoadSelectedImagesList:
     FUNCTION = "load"
     CATEGORY = "vsLinx/image"
 
-    @staticmethod
-    def _parse_paths(s: str) -> List[str]:
-        s = (s or "").strip()
-        if not s:
-            return []
-        try:
-            data = json.loads(s)
-            if isinstance(data, list):
-                return [str(x) for x in data]
-        except Exception:
-            pass
-        return [line.strip() for line in s.splitlines() if line.strip()]
-
-    def load(self, selected_paths: str = "", **kwargs):
+    def load(self, selected_paths: str = "", fail_if_empty: bool = True, **kwargs):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
-        rels = self._parse_paths(selected_paths)
-        if not rels:
-            return ([],) 
+        rels = _parse_paths(selected_paths)
+        seen = set(); rels = [r for r in rels if not (r in seen or seen.add(r))]
 
-        root = os.path.abspath(_input_root()) + os.sep
+        if not rels:
+            _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (List)")
+            return ([],)
+
+        existing, missing = _resolve_existing(rels)
+        _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (List)")
+
         images = []
-        for rel in rels:
-            if os.path.splitext(rel)[1].lower() not in IMG_EXTS:
-                continue
-            abs_path = os.path.abspath(os.path.join(root, rel))
-            if not abs_path.startswith(root) or not os.path.isfile(abs_path):
-                continue
+        for abs_path in existing:
             try:
                 img = Image.open(abs_path)
                 images.append(_pil_to_tensor_bhwc(img))
             except Exception as e:
-                print(f"[vsLinx_LoadSelectedImagesList] skip {rel}: {e}")
+                print(f"[vsLinx_LoadSelectedImagesList] skip {abs_path}: {e}")
+
+        if not images:
+            _fail_if_needed(0, rels, fail_if_empty, "Load (Multiple) Images (List)")
+            return ([],)
 
         return (images,)
 
@@ -104,8 +140,9 @@ class VSLinx_LoadSelectedImagesBatch:
                 "selected_paths": ("STRING", {
                     "multiline": True,
                     "default": "",
-                    "placeholder": "Filled by the 'Pick images' button (JSON array)."
+                    "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
+                "fail_if_empty": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -114,42 +151,30 @@ class VSLinx_LoadSelectedImagesBatch:
     FUNCTION = "load_batch"
     CATEGORY = "vsLinx/image"
 
-    @staticmethod
-    def _parse_paths(s: str) -> List[str]:
-        s = (s or "").strip()
-        if not s:
-            return []
-        try:
-            data = json.loads(s)
-            if isinstance(data, list):
-                return [str(x) for x in data]
-        except Exception:
-            pass
-        return [line.strip() for line in s.splitlines() if line.strip()]
-
-    def load_batch(self, selected_paths: str = "", **kwargs):
+    def load_batch(self, selected_paths: str = "", fail_if_empty: bool = True, **kwargs):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
-        rels = self._parse_paths(selected_paths)
+        rels = _parse_paths(selected_paths)
+        seen = set(); rels = [r for r in rels if not (r in seen or seen.add(r))]
+
         if not rels:
+            _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (Batch)")
             empty = torch.zeros((0, 64, 64, 3), dtype=torch.float32)
             return (empty,)
 
-        root = os.path.abspath(_input_root()) + os.sep
+        existing, missing = _resolve_existing(rels)
+        _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (Batch)")
+
         pil_images: List[Image.Image] = []
-        for rel in rels:
-            if os.path.splitext(rel)[1].lower() not in IMG_EXTS:
-                continue
-            abs_path = os.path.abspath(os.path.join(root, rel))
-            if not abs_path.startswith(root) or not os.path.isfile(abs_path):
-                continue
+        for abs_path in existing:
             try:
                 pil_images.append(Image.open(abs_path))
             except Exception as e:
-                print(f"[vsLinx_LoadSelectedImagesBatch] skip {rel}: {e}")
+                print(f"[vsLinx_LoadSelectedImagesBatch] skip {abs_path}: {e}")
 
         if not pil_images:
+            _fail_if_needed(0, rels, fail_if_empty, "Load (Multiple) Images (Batch)")
             empty = torch.zeros((0, 64, 64, 3), dtype=torch.float32)
             return (empty,)
 
@@ -164,8 +189,8 @@ class VSLinx_LoadSelectedImagesBatch:
 NODE_CLASS_MAPPINGS = {
     "vsLinx_LoadSelectedImagesList": VSLinx_LoadSelectedImagesList,
     "vsLinx_LoadSelectedImagesBatch": VSLinx_LoadSelectedImagesBatch,
-    }
+}
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "vsLinx_LoadSelectedImagesList": "Load Selected Images (List)",
-    "vsLinx_LoadSelectedImagesBatch": "Load Selected Images (Batch)"
+    "vsLinx_LoadSelectedImagesList": "Load (Multiple) Images (List)",
+    "vsLinx_LoadSelectedImagesBatch": "Load (Multiple) Images (Batch)",
 }

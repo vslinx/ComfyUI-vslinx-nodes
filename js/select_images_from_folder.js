@@ -23,7 +23,22 @@ app.registerExtension({
       }
     };
 
+    const dedupPreserve = (arr) => {
+      const seen = new Set();
+      const out = [];
+      for (const x of arr) if (!seen.has(x)) { seen.add(x); out.push(x); }
+      return out;
+    };
+
     const getPathsWidget = (node) => node.widgets?.find(w => w.name === "selected_paths");
+    const getFailWidget  = (node) => node.widgets?.find(w => w.name === "fail_if_empty");
+
+    const hideWidget = (w) => {
+      if (!w) return;
+      w.hidden = true;
+      w.draw = () => {};
+      w.computeSize = () => [0, 0];
+    };
 
     const ensureProps = (node) => {
       node.properties = node.properties || {};
@@ -31,6 +46,18 @@ app.registerExtension({
         node.addProperty?.("max_images", 0);
         if (typeof node.properties.max_images === "undefined") node.properties.max_images = 0;
       }
+      if (typeof node.properties.fail_if_empty === "undefined") {
+        node.addProperty?.("fail_if_empty", true);
+        if (typeof node.properties.fail_if_empty === "undefined") node.properties.fail_if_empty = true;
+      }
+    };
+
+    const syncHiddenInputsFromProps = (node) => {
+      const p = getPathsWidget(node);
+      const f = getFailWidget(node);
+      hideWidget(p);
+      hideWidget(f);
+      if (f) f.value = !!node.properties.fail_if_empty;
     };
 
     const getMax = (node) => {
@@ -71,12 +98,56 @@ app.registerExtension({
       return parseList(raw || "");
     };
 
+    async function existsOnServer(rel, retries = 2, baseTimeout = 200) {
+      const url = viewURLFromRel(rel) + `&cb=${Date.now()}`;
+      for (let i = 0; i <= retries; i++) {
+        const timeout = baseTimeout * (i + 1);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
+        try {
+          let resp = await fetch(url, { method: "HEAD", cache: "no-store", signal: controller.signal });
+          clearTimeout(timer);
+          if (resp.ok) return true;
+          if (resp.status === 405) {
+            const controller2 = new AbortController();
+            const timer2 = setTimeout(() => controller2.abort(), timeout);
+            resp = await fetch(url, { method: "GET", cache: "no-store", signal: controller2.signal });
+            clearTimeout(timer2);
+            if (resp.ok) return true;
+          }
+        } catch (_) {
+          // ignore and retry
+        }
+      }
+      return false;
+    }
+
+    async function filterExistingRels(rels, concurrency = 4) {
+      const kept = [];
+      let idx = 0;
+      const workers = Array(Math.min(concurrency, rels.length)).fill(0).map(async () => {
+        while (true) {
+          const i = idx++;
+          if (i >= rels.length) break;
+          const rel = rels[i];
+          if (await existsOnServer(rel)) kept.push(rel);
+        }
+      });
+      await Promise.all(workers);
+      return kept;
+    }
+
     async function previewFromRels(node, rels) {
       const imgs = [];
-      for (const rel of rels) {
-        try { imgs.push(await loadImg(viewURLFromRel(rel))); }
-        catch (e) { console.warn("Preview load failed:", rel, e); }
-      }
+      await Promise.allSettled(rels.map(async (rel) => {
+        const url = viewURLFromRel(rel);
+        try {
+          const img = await loadImg(url);
+          imgs.push(img);
+        } catch (e) {
+          // unsupported codec / blocked / transient – ignore
+        }
+      }));
       node.imgs = imgs.length ? imgs : null;
       if (imgs.length > 1 && (!node.size || node.size[1] < 220)) {
         node.size = [node.size?.[0] ?? 210, 240];
@@ -86,41 +157,35 @@ app.registerExtension({
 
     async function syncToCap(node) {
       ensureProps(node);
+      syncHiddenInputsFromProps(node);
 
-      const w = getPathsWidget(node);
-      if (w) {
-        w.hidden = true;
-        w.draw = () => {};
-        w.computeSize = () => [0, 0];
-      }
-
-      const all = readRels(node);
+      const all = dedupPreserve(readRels(node));
       if (!all.length) {
         node.imgs = null;
+        node._missingAny = false;
         node.setDirtyCanvas(true, true);
         return;
       }
 
       const cap = getMax(node);
-      const eff = cap === Infinity ? all : all.slice(0, cap);
+      const capped = cap === Infinity ? all : all.slice(0, cap);
 
-      writeRels(node, eff);
+      const kept = await filterExistingRels(capped, 4);
 
-      await previewFromRels(node, eff);
+      previewFromRels(node, kept);
+
+      writeRels(node, kept);
+      node._missingAny = kept.length < capped.length;
     }
 
     const origCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       const r = origCreated?.apply(this, arguments);
-
       ensureProps(this);
+      syncHiddenInputsFromProps(this);
 
       const pathsWidget = getPathsWidget(this);
-      if (pathsWidget) {
-        pathsWidget.hidden = true;
-        pathsWidget.draw = () => {};
-        pathsWidget.computeSize = () => [0, 0];
-      }
+      hideWidget(pathsWidget);
 
       const pickBtn = this.addWidget("button", "Select images", null, () => {
         const input = document.createElement("input");
@@ -139,34 +204,27 @@ app.registerExtension({
           const take = cap === Infinity ? files : files.slice(0, cap);
 
           const rels = [];
-          const imgs = [];
-
           for (const f of take) {
             const form = new FormData();
             form.append("image", f, f.name);
             const resp = await api.fetchApi("/upload/image", { method: "POST", body: form });
-            if (!resp.ok) { console.error("Upload failed", f.name, resp.status); continue; }
+            if (!resp.ok) {
+              console.error("Upload failed", f.name, resp.status, resp.statusText);
+              continue;
+            }
             const data = await resp.json();
             const rel = data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
             rels.push(rel);
-
-            const url = api.apiURL(`/view?${new URLSearchParams({
-              filename: data.name,
-              type: data.type ?? "input",
-              subfolder: data.subfolder ?? "",
-            }).toString()}`);
-
-            try { imgs.push(await loadImg(url)); }
-            catch (e) { console.warn("Preview load failed:", url, e); }
           }
 
-          writeRels(this, rels);
+          const dedup = dedupPreserve(rels);
 
-          this.imgs = imgs.length ? imgs : null;
-          if (imgs.length > 1 && (!this.size || this.size[1] < 220)) {
-            this.size = [this.size?.[0] ?? 210, 240];
-          }
-          this.setDirtyCanvas(true, true);
+          const kept = await filterExistingRels(dedup, 4);
+
+          previewFromRels(this, kept);
+
+          writeRels(this, kept);
+          this._missingAny = kept.length < dedup.length;
         });
 
         input.click();
@@ -178,7 +236,6 @@ app.registerExtension({
       }
 
       requestAnimationFrame(() => syncToCap(this));
-
       return r;
     };
 
@@ -188,6 +245,11 @@ app.registerExtension({
       if (name === "max_images") {
         syncToCap(this);
       }
+      if (name === "fail_if_empty") {
+        const fw = getFailWidget(this);
+        if (fw) fw.value = !!value;
+        this.properties.fail_if_empty = !!value;
+      }
       return r;
     };
 
@@ -195,7 +257,7 @@ app.registerExtension({
     nodeType.prototype.onConfigure = function (...args) {
       const r = origConfigure?.apply(this, args);
       ensureProps(this);
-      setTimeout(() => syncToCap(this), 0);
+      setTimeout(() => { syncHiddenInputsFromProps(this); syncToCap(this); }, 0);
       return r;
     };
   },
