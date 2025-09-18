@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-vslinx-nodes"
-description = "Custom nodes that let you quickly load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch."
-version = "1.0.1"
+description = "A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value."
+version = "1.1.1"
 license = { file = "LICENSE" }
 
 [project.urls]

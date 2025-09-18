@@ -2,6 +2,8 @@ import importlib
 
 node_list = [
     "multi_image_select",
+    "boolean_operator",
+    "bypass_helper",
 ]
 
 NODE_CLASS_MAPPINGS = {}
