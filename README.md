@@ -47,6 +47,9 @@ This node works the same way as ``Forward/Bypass on Boolean (Any)``, but instead
 
 ## Changelog
 ### v1.1.1
+* The ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` now search for the parent boolean value(s) of the upstream nodes if they're either ``Boolean AND Operator``, ``Boolean OR Operator`` or ``Boolean flip`` to ensure bypassing even if boolean value is passed by a node instead of the in-node switch.
+
+### v1.1.1
 * added ``Forward/Bypass on Boolean (Any)`` that lets you bypass directly connected node(s) based on a boolean value
 * added ``Forward/Mute on Boolean (Any)`` that lets you mute directly connected node(s) based on a boolean value
 * added ``Boolean AND Operator`` that returns true if both of it's boolean inputs are true, otherwise returns false
