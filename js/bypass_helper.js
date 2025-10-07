@@ -79,31 +79,91 @@ function setDownstreamMode(node, modeWhenTrue, on) {
 }
 
 function readUpstreamBoolean(node, boolInputIndex) {
-  const pin = node.inputs?.[boolInputIndex];
-  if (!pin) return null;
-
-  const linkId = pin.link ?? pin.links?.[0];
+  const linkId = getFirstIncomingLinkId(node, boolInputIndex);
   if (linkId == null) return null;
-
-  const link = node.graph?.links?.[linkId];
-  if (!link) return null;
-
-  const src = node.graph.getNodeById(link.origin_id);
-  if (!src) return null;
-
-  const widgets = src.widgets || [];
-  for (const w of widgets) {
-    const looksBool = w.type === "toggle" || w.type === "checkbox" || typeof w.value === "boolean";
-    if (looksBool) return !!w.value;
-  }
-  if (typeof src.properties?.value === "boolean") return !!src.properties.value;
-
-  return null;
+  return resolveBooleanAtLink(node.graph, linkId);
 }
+
 
 function findBoolWidget(node, name) {
   if (!node.widgets) return null;
   return node.widgets.find(w => w.name === name || w.label === name);
+}
+
+
+function getFirstIncomingLinkId(node, inputIndex) {
+  const pin = node.inputs?.[inputIndex];
+  if (!pin) return null;
+  return pin.link ?? (pin.links?.length ? pin.links[0] : null);
+}
+
+function readNodeBooleanWidget(node) {
+  const widgets = node.widgets || [];
+  for (const w of widgets) {
+    const looksBool = w.type === "toggle" || w.type === "checkbox" || typeof w.value === "boolean";
+    if (looksBool) return !!w.value;
+  }
+  if (typeof node.properties?.value === "boolean") return !!node.properties.value;
+  return null;
+}
+
+const BOOLEAN_NODE_EVAL = {
+  "vsLinx_BooleanFlip"(node, originSlot, resolveUpstream) {
+    const inLink = getFirstIncomingLinkId(node, 0);
+    if (inLink == null) return null;
+    const v = resolveUpstream(node.graph, inLink);
+    return (v == null) ? null : !v;
+  },
+  "vsLinx_BooleanAndOperator"(node, originSlot, resolveUpstream) {
+  const inA = getFirstIncomingLinkId(node, 0);
+  const inB = getFirstIncomingLinkId(node, 1);
+  const a = inA != null ? resolveUpstream(node.graph, inA) : null;
+  const b = inB != null ? resolveUpstream(node.graph, inB) : null;
+  if (a == null || b == null) return null;
+  return !!a && !!b;
+},
+"vsLinx_BooleanOrOperator"(node, originSlot, resolveUpstream) {
+  const inA = getFirstIncomingLinkId(node, 0);
+  const inB = getFirstIncomingLinkId(node, 1);
+  const a = inA != null ? resolveUpstream(node.graph, inA) : null;
+  const b = inB != null ? resolveUpstream(node.graph, inB) : null;
+  if (a == null || b == null) return null;
+  return !!a || !!b;
+},
+
+};
+
+// Core: resolve a boolean value *at a link* by walking upstream recursively.
+// - graph: current LiteGraph instance
+// - linkId: link whose value we want to infer
+// - seen: cycle guard
+function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
+  const link = graph?.links?.[linkId];
+  if (!link) return null;
+  const src = graph.getNodeById(link.origin_id);
+  if (!src) return null;
+
+  const key = `${src.id}:${link.origin_slot}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+
+  const evalFn = BOOLEAN_NODE_EVAL[src.type];
+  if (typeof evalFn === "function") {
+    const v = evalFn(src, link.origin_slot, (g, lid) => resolveBooleanAtLink(g, lid, seen));
+    if (v != null) return !!v;
+  }
+
+  const outSlot = src.outputs?.[link.origin_slot];
+  if (outSlot && typeof outSlot.__vl_bool_preview === "boolean") {
+    return !!outSlot.__vl_bool_preview;
+  }
+
+  const widgetVal = readNodeBooleanWidget(src);
+  if (widgetVal != null) return !!widgetVal;
+
+  if (outSlot && typeof outSlot.value === "boolean") return !!outSlot.value;
+
+  return null;
 }
 
 function startPolling(node, cfg) {
@@ -183,7 +243,6 @@ app.registerExtension({
         if (w) setDownstreamMode(this, cfg.trueMode, !!w.value);
       }
 
-      // If a downstream node connects while active, apply immediately
       if (type === LiteGraph.OUTPUT && isConnected) {
         const w = findBoolWidget(this, cfg.readWidgetName);
         if (w && w.value) setDownstreamMode(this, cfg.trueMode, true);
