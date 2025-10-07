@@ -1,7 +1,7 @@
 import { app } from "/scripts/app.js";
 
 const MODE_ALWAYS = 0;
-const MODE_NEVER  = 2;
+const MODE_NEVER = 2;
 const MODE_BYPASS = 4;
 
 
@@ -107,6 +107,47 @@ function readNodeBooleanWidget(node) {
   return null;
 }
 
+function hasAnyIncomingLinks(node) {
+  const ins = node.inputs || [];
+  for (const pin of ins) {
+    if (!pin) continue;
+    const lid = pin.link ?? (pin.links?.length ? pin.links[0] : null);
+    if (lid != null) return true;
+  }
+  return false;
+}
+
+function findWidgetForInput(node, inputIndex) {
+  const widgets = node.widgets || [];
+  if (!widgets.length) return null;
+
+  const pin = node.inputs?.[inputIndex];
+  const pinName = pin?.name?.toLowerCase();
+
+  if (pinName) {
+    const byName = widgets.find(w =>
+      (w.name && String(w.name).toLowerCase() === pinName) ||
+      (w.label && String(w.label).toLowerCase() === pinName)
+    );
+    if (byName) return byName;
+  }
+
+  const boolWidgets = widgets.filter(w => w.type === "toggle" || w.type === "checkbox" || typeof w.value === "boolean");
+  return boolWidgets[inputIndex] || null;
+}
+
+function readBooleanInputValue(node, idx, resolveUpstream) {
+  const inLink = getFirstIncomingLinkId(node, idx);
+  if (inLink != null) {
+    return resolveUpstream(node.graph, inLink);
+  }
+  const w = findWidgetForInput(node, idx);
+  if (w && typeof w.value === "boolean") return !!w.value;
+  const name = node.inputs?.[idx]?.name;
+  if (name && typeof node.properties?.[name] === "boolean") return !!node.properties[name];
+  return null;
+}
+
 const BOOLEAN_NODE_EVAL = {
   "vsLinx_BooleanFlip"(node, originSlot, resolveUpstream) {
     const inLink = getFirstIncomingLinkId(node, 0);
@@ -115,28 +156,20 @@ const BOOLEAN_NODE_EVAL = {
     return (v == null) ? null : !v;
   },
   "vsLinx_BooleanAndOperator"(node, originSlot, resolveUpstream) {
-  const inA = getFirstIncomingLinkId(node, 0);
-  const inB = getFirstIncomingLinkId(node, 1);
-  const a = inA != null ? resolveUpstream(node.graph, inA) : null;
-  const b = inB != null ? resolveUpstream(node.graph, inB) : null;
-  if (a == null || b == null) return null;
-  return !!a && !!b;
-},
-"vsLinx_BooleanOrOperator"(node, originSlot, resolveUpstream) {
-  const inA = getFirstIncomingLinkId(node, 0);
-  const inB = getFirstIncomingLinkId(node, 1);
-  const a = inA != null ? resolveUpstream(node.graph, inA) : null;
-  const b = inB != null ? resolveUpstream(node.graph, inB) : null;
-  if (a == null || b == null) return null;
-  return !!a || !!b;
-},
+    const a = readBooleanInputValue(node, 0, resolveUpstream);
+    const b = readBooleanInputValue(node, 1, resolveUpstream);
+    if (a == null || b == null) return null;
+    return !!a && !!b;
+  },
+  "vsLinx_BooleanOrOperator"(node, originSlot, resolveUpstream) {
+    const a = readBooleanInputValue(node, 0, resolveUpstream);
+    const b = readBooleanInputValue(node, 1, resolveUpstream);
+    if (a == null || b == null) return null;
+    return !!a || !!b;
+  },
 
 };
 
-// Core: resolve a boolean value *at a link* by walking upstream recursively.
-// - graph: current LiteGraph instance
-// - linkId: link whose value we want to infer
-// - seen: cycle guard
 function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
   const link = graph?.links?.[linkId];
   if (!link) return null;
@@ -158,13 +191,16 @@ function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
     return !!outSlot.__vl_bool_preview;
   }
 
-  const widgetVal = readNodeBooleanWidget(src);
-  if (widgetVal != null) return !!widgetVal;
+  if (!hasAnyIncomingLinks(src)) {
+    const widgetVal = readNodeBooleanWidget(src);
+    if (widgetVal != null) return !!widgetVal;
+  }
 
   if (outSlot && typeof outSlot.value === "boolean") return !!outSlot.value;
 
   return null;
 }
+
 
 function startPolling(node, cfg) {
   stopPolling(node);
@@ -191,7 +227,7 @@ function hookLocalWidget(node, cfg) {
   const w = findBoolWidget(node, cfg.readWidgetName);
   if (!w) return;
   const old = w.callback;
-  w.callback = function(v) {
+  w.callback = function (v) {
     try {
       const linked = !!(node.inputs?.[cfg.boolInputIndex] &&
         (node.inputs[cfg.boolInputIndex].link != null || (node.inputs[cfg.boolInputIndex].links?.length)));
