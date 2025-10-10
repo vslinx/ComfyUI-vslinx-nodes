@@ -1,5 +1,5 @@
 # ComfyUI-vslinx-nodes
-These custom ComfyUI nodes let you quickly load one or multiple images through the default file dialog. They work like the normal "Load Image" node but support multi-select, so you no longer need to create folders or copy file paths manually. The nodes also include a preview, allowing you to see which images have been selected and switch between them using the standard ComfyUI image preview. There are two versions available: one that outputs the images as a list and another that outputs them as a batch.
+A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value. Includes a ``Fit Image into BBox Mask`` node as well, that precisely fits and places an image into a masked region’s bounding box — ideal for compositing poses, objects, or partial elements into existing images with preserved aspect ratio and alignment options.
 
 ## How to Install
 ### **Recommended**
@@ -45,7 +45,48 @@ This node accepts any input type and forwards it unchanged. Its pass-through beh
 #### Forward/Mute on Boolean (Any)
 This node works the same way as ``Forward/Bypass on Boolean (Any)``, but instead of bypassing the connected nodes it mutes them. The mute state can be controlled with the built-in boolean switch or by linking an external boolean, and changes are applied instantly in the UI.
 
+### Inpaint helper
+#### Fit Image into BBox Mask
+This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
+This node does the following:
+- Detects the bounding box (BBox) of your input mask — that is, the smallest rectangle that covers all white/non-zero pixels.
+- Resizes the source image to fit inside (or cover) that bounding box, preserving aspect ratio.
+- Places the resized image at the corresponding position in the destination image.
+- Outputs the final composited image, a stand-alone fitted image, and a mask showing the exact placed region.
+
+You can find an example workflow [here](https://github.com/user-attachments/assets/fb344190-206b-4c15-93ae-cac05c8b6740) for the images generated in the gif below(download and drop image into comfyui).
+
+Parameters:
+| Parameter | Type | Description |
+| -------- | -------- | ------- |
+| source | IMAGE | The image you want to insert (e.g. pose, object, decal). |
+| mask | MASK | Defines where the image will be placed. The white area determines the bounding box. |
+| destination | IMAGE (optional) | The image you’re compositing onto. If not provided, a blank canvas is created. |
+| mode | ``fit`` / ``fill`` | ``fit`` scales the image inside the mask’s box (no crop). ``fill`` covers the box completely (may crop edges). |
+| align_x / align_y | ``center`` / ``left`` / ``right`` and ``center`` / ``top`` / ``bottom`` | Alignment of the fitted image inside the box if the aspect ratio doesn’t match perfectly. |
+| offset_x / offset_y | INT | Manual pixel offset for fine-tuning the placement. |
+| threshold | FLOAT(0-1) | Mask brightness threshold for detecting the box. 0.5 works for most cases. |
+| pad | INT | Expands the bounding box outward by N pixels. |
+| use_source_alpha | BOOLEAN | If true, respects transparency in the source image during paste. |
+| antialias | ``lanczos`` / ``bicubic`` / ``bilinear`` | Resampling method used when resizing the source image. |
+| canvas_w / canvas_h | INT (optional) | Canvas size when no destination image is given. |
+
+Outputs:
+| Parameter | Type | Description |
+| -------- | -------- | ------- |
+| composite | IMAGE | The final composited image (destination + fitted source). |
+| fitted_source | IMAGE | The resized image placed on a blank canvas. |
+| placed_mask | MASK | The exact mask area where the image was placed. |
+| x, y, w, h | INTs | Bounding box coordinates and dimensions used for placement. |
+
+<img width="1567" height="732" alt="Image" src="https://github.com/user-attachments/assets/ce8aa314-33e0-408f-b1dc-c98f966ea1a4" />
+
+<img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
+
 ## Changelog
+### v1.1.3
+* added new ``Fit Image into BBox Mask``-Node in it's own ``vsLinx/inpaint`` node-library. This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions. It's intended to be used in an inpainting process where you'll pre-process this image and execute a controlnet on the masked area. An example and can be found in the node description above.
+
 ### v1.1.2
 * The ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` now search for the parent boolean value(s) of the upstream nodes if they're either ``Boolean AND Operator``, ``Boolean OR Operator`` or ``Boolean flip`` to ensure bypassing even if boolean value is passed by a node instead of the in-node switch.
 
