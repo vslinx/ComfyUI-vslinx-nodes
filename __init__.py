@@ -4,6 +4,7 @@ node_list = [
     "multi_image_select",
     "boolean_operator",
     "bypass_helper",
+    "inpaint_helper",
 ]
 
 NODE_CLASS_MAPPINGS = {}
