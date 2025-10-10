@@ -1,5 +1,5 @@
 # ComfyUI-vslinx-nodes
-These custom ComfyUI nodes let you quickly load one or multiple images through the default file dialog. They work like the normal "Load Image" node but support multi-select, so you no longer need to create folders or copy file paths manually. The nodes also include a preview, allowing you to see which images have been selected and switch between them using the standard ComfyUI image preview. There are two versions available: one that outputs the images as a list and another that outputs them as a batch.
+A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value. Includes a ``Fit Image into BBox Mask`` node as well, that precisely fits and places an image into a masked region’s bounding box — ideal for compositing poses, objects, or partial elements into existing images with preserved aspect ratio and alignment options.
 
 ## How to Install
 ### **Recommended**
@@ -81,9 +81,12 @@ Outputs:
 
 <img width="1567" height="732" alt="Image" src="https://github.com/user-attachments/assets/ce8aa314-33e0-408f-b1dc-c98f966ea1a4" />
 
-![Image](https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f)
+<img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v1.1.3
+* added new ``Fit Image into BBox Mask``-Node in it's own ``vsLinx/inpaint`` node-library. This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions. It's intended to be used in an inpainting process where you'll pre-process this image and execute a controlnet on the masked area. An example and can be found in the node description above.
+
 ### v1.1.2
 * The ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` now search for the parent boolean value(s) of the upstream nodes if they're either ``Boolean AND Operator``, ``Boolean OR Operator`` or ``Boolean flip`` to ensure bypassing even if boolean value is passed by a node instead of the in-node switch.
 
