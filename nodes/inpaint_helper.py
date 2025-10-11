@@ -129,26 +129,28 @@ def _alignment_offset(ax: str, ay: str, box_w: int, box_h: int, content_w: int, 
     return ox, oy
 
 class vsLinx_FitImageIntoBBoxMask:
+    DESCRIPTION = "This node fits an image inside the bounding box region of a mask and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions. This node does the following:"
+    
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "source": ("IMAGE",),
-                "mask": ("MASK",),
-                "mode": (["fit","fill"], {"default":"fit"}),
-                "align_x": (["center","left","right"], {"default":"center"}),
-                "align_y": (["center","top","bottom"], {"default":"center"}),
-                "offset_x": ("INT", {"default":0, "min":-4096, "max":4096, "step":1}),
-                "offset_y": ("INT", {"default":0, "min":-4096, "max":4096, "step":1}),
-                "threshold": ("FLOAT", {"default":0.5, "min":0.0, "max":1.0, "step":0.01}),
-                "pad": ("INT", {"default":0, "min":0, "max":4096, "step":1}),
-                "use_source_alpha": ("BOOLEAN", {"default":False}),
-                "antialias": (["lanczos","bicubic","bilinear"], {"default":"lanczos"}),
+                "source": ("IMAGE", {"tooltip": "The image you want to insert (e.g. pose, object, decal)."}),
+                "mask": ("MASK", {"tooltip": "Defines where the image will be placed. The white area determines the bounding box."}),
+                "mode": (["fit","fill"], {"default":"fit", "tooltip": "fit scales the image inside the mask’s box (no crop). fill covers the box completely (may crop edges)."}),
+                "align_x": (["center","left","right"], {"default":"center", "tooltip": "Alignment on the x axis of the fitted image inside the box if the aspect ratio doesn’t match perfectly."}),
+                "align_y": (["center","top","bottom"], {"default":"center", "tooltip": "Alignment on the y axis of the fitted image inside the box if the aspect ratio doesn’t match perfectly."}),
+                "offset_x": ("INT", {"default":0, "min":-4096, "max":4096, "step":1, "tooltip": "Manual pixel offset on the x axis for fine-tuning the placement."}),
+                "offset_y": ("INT", {"default":0, "min":-4096, "max":4096, "step":1, "tooltip": "Manual pixel offset on the y axis for fine-tuning the placement."}),
+                "threshold": ("FLOAT", {"default":0.5, "min":0.0, "max":1.0, "step":0.01, "tooltip": "Mask brightness threshold for detecting the box. 0.5 works for most cases."}),
+                "pad": ("INT", {"default":0, "min":0, "max":4096, "step":1, "tooltip": "Expands the bounding box outward by N pixels."}),
+                "use_source_alpha": ("BOOLEAN", {"default":False, "tooltip": "If true, respects transparency in the source image during paste."}),
+                "antialias": (["lanczos","bicubic","bilinear"], {"default":"lanczos", "tooltip": "Resampling method used when resizing the source image."}),
             },
             "optional": {
-                "destination": ("IMAGE",),
-                "canvas_w": ("INT", {"default":1024, "min":16, "max":8192, "step":1}),
-                "canvas_h": ("INT", {"default":1024, "min":16, "max":8192, "step":1}),
+                "destination": ("IMAGE", {"tooltip": "The image you’re compositing onto. If not provided, a blank canvas is created."}),
+                "canvas_w": ("INT", {"default":1024, "min":16, "max":8192, "step":1, "tooltip": "Canvas width when no destination image is given."}),
+                "canvas_h": ("INT", {"default":1024, "min":16, "max":8192, "step":1, "tooltip": "Canvas height when no destination image is given."}),
             }
         }
 

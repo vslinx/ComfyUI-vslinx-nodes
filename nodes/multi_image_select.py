@@ -79,6 +79,7 @@ class VSLinx_LoadSelectedImagesList:
     Reads files listed in `selected_paths` (relative to ComfyUI input dir)
     and outputs an IMAGE **list** where each item is BHWC with B=1.
     """
+    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as an image list, allowing downstream nodes to process them one after another."
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -132,6 +133,8 @@ class VSLinx_LoadSelectedImagesBatch:
     Same as above, but returns a single **batched** IMAGE tensor (B, H, W, 3).
     All images are resized to the first image's size to ensure a valid batch.
     """
+    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as a batch, allowing downstream nodes to process them together."
+
 
     @classmethod
     def INPUT_TYPES(cls):
