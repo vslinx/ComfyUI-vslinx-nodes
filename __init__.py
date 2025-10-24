@@ -5,6 +5,7 @@ node_list = [
     "boolean_operator",
     "bypass_helper",
     "inpaint_helper",
+    "lora_save_helper",
 ]
 
 NODE_CLASS_MAPPINGS = {}
