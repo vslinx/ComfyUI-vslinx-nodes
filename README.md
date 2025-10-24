@@ -1,5 +1,5 @@
 # ComfyUI-vslinx-nodes
-A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value. Includes a ``Fit Image into BBox Mask`` node as well, that precisely fits and places an image into a masked region’s bounding box — ideal for compositing poses, objects, or partial elements into existing images with preserved aspect ratio and alignment options.
+A set of custom nodes for ComfyUI that make workflows easier: load multiple images via a multi-select dialog with preview. The images are instantly uploaded to the input folder and can be output either as a list or a batch. It also includes boolean AND and OR operators as well as a boolean flip for easy workflow branching, along with nodes to bypass or mute other nodes based on a boolean value. Includes a ``Fit Image into BBox Mask`` node as well, that precisely fits and places an image into a masked region’s bounding box — ideal for compositing poses, objects, or partial elements into existing images with preserved aspect ratio and alignment options. Furthermore includes a bridge to connect a rgthree power lora loader to the image saver to persist lora information in metadata.
 
 ## How to Install
 ### **Recommended**
@@ -45,6 +45,12 @@ This node accepts any input type and forwards it unchanged. Its pass-through beh
 #### Forward/Mute on Boolean (Any)
 This node works the same way as ``Forward/Bypass on Boolean (Any)``, but instead of bypassing the connected nodes it mutes them. The mute state can be controlled with the built-in boolean switch or by linking an external boolean, and changes are applied instantly in the UI.
 
+#### Power Lora Loader to Prompt (Image Saver)
+This node acts as a bridge between the **Power Lora Loader (rgthree)** node by [rgthree](https://github.com/rgthree/rgthree-comfy) and the **Image Saver** node by [alexopus](https://github.com/alexopus/ComfyUI-Image-Saver).<br>
+You can either **connect a model**, or **provide the id**  or **title** of a `Power Lora Loader (rgthree)` node, along with your prompt as a text string. The node will then **append the LoRAs** in the correct format for the Image Saver node. When you pass this new string to Image Saver as the **positive prompt**, it will save the hashes of the LoRAs for Civitai and other AI platforms while removing the LoRAs from the final string, so your prompt doesn’t look messy.
+
+<img width="1766" height="498" alt="Image" src="https://github.com/user-attachments/assets/cb1d76a7-d638-4573-950e-4ae371d428be" />
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
@@ -61,6 +67,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v1.3.0
+* added new ``Power Lora Loader to Prompt (Image Saver)``-Node to the utility group. This Node can read the loras of a Power Lora Loader from rgthree and append them to a text string - this is helpful in combination with the Image Saver Node from alexopus to persist loras & their weights.
+
 ### v1.2.0
 * added documentation including input & output parameters for every single node, viewable via the in-comfy node info view
 * changed some of the texts in readme & removed parameter documentation from readme
