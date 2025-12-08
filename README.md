@@ -67,6 +67,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v1.3.1
+* fixed a bug where the ``Power Lora Loader to Prompt (Image Saver)`` could not gather the information of the loras if they were qwen, flux or lumina2 (Z-IMG)
+
 ### v1.3.0
 * added new ``Power Lora Loader to Prompt (Image Saver)``-Node to the utility group. This Node can read the loras of a Power Lora Loader from rgthree and append them to a text string - this is helpful in combination with the Image Saver Node from alexopus to persist loras & their weights.
 
