@@ -27,6 +27,31 @@ def _format_lora_token(path: str, strength: float) -> str:
     s = _truncate_2dp(strength)
     return f"<lora:{path}:{s:.2f}>"
 
+def _coerce_text_to_str(text) -> tuple[str, bool]:
+    """
+    Returns (string_text, changed_flag).
+    Safely handles list/tuple/None and non-strs for Z-IMG style prompts.
+    """
+    if text is None:
+        return ("", True)
+    if isinstance(text, (list, tuple)):
+        try:
+            return (" ".join(map(str, text)), True)
+        except Exception:
+            return (" ".join([str(x) for x in text]), True)
+    if not isinstance(text, str):
+        return (str(text), True)
+    return (text, False)
+
+def _extract_node_id_from_unique_id(unique_id) -> str | None:
+    """
+    Handles unique_id formats like '230:228' (Z-IMG). Returns the left-hand id as a string.
+    """
+    if unique_id is None:
+        return None
+    s = str(unique_id)
+    return s.split(":", 1)[0] if s else None
+
 def _find_target_node_id(*, workflow: dict, unique_id: int, id: int, node_title: str, debug: bool) -> int | None:
     """
     Resolution priority:
@@ -36,15 +61,23 @@ def _find_target_node_id(*, workflow: dict, unique_id: int, id: int, node_title:
     """
     nodes = workflow.get("nodes", []) or []
 
+    # --- Priority 1: resolve via link on THIS node's `powerloraloader_model` input
     link_id = None
     link_to_node_id: dict[int, int] = {}
+    my_node_id_str = _extract_node_id_from_unique_id(unique_id)
 
     for node in nodes:
-        if node.get("type") == "vsLinx_AppendLorasFromNodeToString" and node.get("id") == int(unique_id) and link_id is None:
+        if (
+            node.get("type") == "vsLinx_AppendLorasFromNodeToString"
+            and my_node_id_str is not None
+            and str(node.get("id")) == my_node_id_str
+            and link_id is None
+        ):
             for node_input in node.get("inputs", []):
                 if node_input.get("name") == "powerloraloader_model":
                     link_id = node_input.get("link")
                     break
+
         for out in node.get("outputs", []) or []:
             for lnk in out.get("links", []) or []:
                 link_to_node_id[lnk] = node.get("id")
@@ -55,10 +88,12 @@ def _find_target_node_id(*, workflow: dict, unique_id: int, id: int, node_title:
         if upstream is not None:
             return upstream
 
+    # --- Priority 2: explicit id
     if id and id != 0:
         _log(debug, f"[priority: id] Using provided id={id}")
         return id
 
+    # --- Priority 3: node title
     if node_title:
         for node in nodes:
             if "title" in node and node["title"] == node_title:
@@ -89,6 +124,7 @@ def _gather_lora_tokens_from_prompt_node(prompt: dict, node_id: int, *, only_ena
         if not (isinstance(k, str) and k.startswith("lora_") and isinstance(v, dict)):
             continue
 
+        # Respect only_enabled
         if only_enabled and not v.get("on", False):
             _log(debug, f"Skipping {k} (disabled).")
             continue
@@ -157,8 +193,12 @@ class vsLinx_AppendLorasFromNodeToString:
         prompt=None,
         unique_id: int = 0
     ):
+        coerced_text, changed = _coerce_text_to_str(text)
         _log(debug, "----- CALL START -----")
-        _log(debug, f"Input text: {repr(text)}")
+        _log(debug, f"Input text (raw type={type(text).__name__}): {repr(text)}")
+        if changed:
+            _log(debug, f"Coerced text -> {repr(coerced_text)}")
+
         try:
             workflow = (extra_pnginfo or {}).get("workflow") or {}
 
@@ -172,7 +212,7 @@ class vsLinx_AppendLorasFromNodeToString:
             if node_id is None:
                 _log(debug, "No target node could be determined; returning original text.")
                 _log(debug, "------ CALL END ------")
-                return (text,)
+                return (coerced_text,)
 
             _log(debug, f"Target node id: {node_id}")
             tokens = _gather_lora_tokens_from_prompt_node(
@@ -186,17 +226,17 @@ class vsLinx_AppendLorasFromNodeToString:
             if not tokens:
                 _log(debug, "No LoRAs found. Returning original text.")
                 _log(debug, "------ CALL END ------")
-                return (text,)
+                return (coerced_text,)
 
-            spacer = "" if (text.endswith(" ") or not text) else " "
-            out = f"{text}{spacer}{' '.join(tokens)}"
+            spacer = "" if (coerced_text.endswith(" ") or not coerced_text) else " "
+            out = f"{coerced_text}{spacer}{' '.join(tokens)}"
             _log(debug, f"Output text: {repr(out)}")
             _log(debug, "------ CALL END ------")
             return (out,)
         except Exception as e:
             _log(debug, f"ERROR: {e}")
             _log(debug, "------ CALL END ------")
-            return (text,)
+            return (coerced_text,)
 
 
 NODE_CLASS_MAPPINGS = {
