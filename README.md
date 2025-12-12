@@ -14,8 +14,13 @@ A set of custom nodes for ComfyUI that make workflows easier: load multiple imag
 
 ## Nodes
 
-### Image
+### Text
+#### (Impact-Pack) Multiline Wildcard Text
+Provides a simple multiline text field with a wildcard selector that automatically appends selected wildcards. This node uses the API endpoint from the [Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack) custom node to provide a dropdown that lets you select wildcards to be added to your prompt.  
+This node does not resolve these wildcards by itself and is intended to be passed into the **“Populated Prompt”** field in the Impact-Pack **“ImpactWildcardProcessor”** node.
+<img width="1562" height="447" alt="Image" src="https://github.com/user-attachments/assets/27c5e3e3-4e51-450e-b91d-6f3ef48b2f28" />
 
+### Image
 #### Load (Multiple) Images (List)
 Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your ``input`` folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images: you can click on an image to switch from the tile view to a full image view. Clicking the X returns you to the tile view, while the numbering in the bottom-right corner allows you to switch between images. <br>
 The node includes a ``max_images`` property that defines how many images can be loaded. If set to 0 or left empty, the number of allowed images is unlimited. <br>
@@ -67,6 +72,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.4.0
+- added the "(Impact-Pack) Multiline Wildcard Text"-Node that provides a simple multiline text field with a wildcard selector that automatically appends selected wildcards. 
+
 ### v1.3.1
 * fixed a bug where the ``Power Lora Loader to Prompt (Image Saver)`` could not gather the information of the loras if they were qwen, flux or lumina2 (Z-IMG)
 

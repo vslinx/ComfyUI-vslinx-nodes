@@ -6,6 +6,7 @@ node_list = [
     "bypass_helper",
     "inpaint_helper",
     "lora_save_helper",
+    "impact_multiline_wildcard_text",
 ]
 
 NODE_CLASS_MAPPINGS = {}
