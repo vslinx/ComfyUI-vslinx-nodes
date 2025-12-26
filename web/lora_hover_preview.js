@@ -214,8 +214,13 @@ async function showPreviewFor(name, ev) {
   } catch {
     return;
   }
+
   if (token !== requestToken) return;
-  if (!resp || !resp.ok) return;
+  if (!resp) return;
+
+  if (resp.status === 204) return;
+
+  if (!resp.ok) return;
 
   const ct = (resp.headers.get("content-type") || "").toLowerCase();
 
@@ -262,7 +267,6 @@ async function showPreviewFor(name, ev) {
     return;
   }
 }
-
 
 function attachHoverHandlers(menuEl) {
   if (menuEl.dataset.vslinxHoverPreviewAttached === "1") return;

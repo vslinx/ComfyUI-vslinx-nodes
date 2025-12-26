@@ -7,7 +7,7 @@ import folder_paths
 
 routes = PromptServer.instance.routes
 
-MODEL_EXTS = (".safetensors", ".pt", ".ckpt")
+MODEL_EXTS = (".safetensors", ".pt", ".ckpt", ".gguf")
 IMG_EXTS = (".png", ".webp", ".jpg", ".jpeg")
 VID_EXTS = (".mp4", ".webm")
 
@@ -51,15 +51,12 @@ def _candidate_paths_for_model(model_file: Path) -> list[Path]:
 
     candidates: list[Path] = []
 
-    # Prefer preview.* first
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(parent / f"{base_name}.preview{ext}")
 
-    # Then base.*
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(parent / f"{base_name}{ext}")
 
-    # Optional folder convention: base/preview.*
     folder = parent / base_name
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(folder / f"preview{ext}")
@@ -93,7 +90,9 @@ async def _serve_preview_for_model_file(model_file: Path):
             )
             resp.headers["Content-Type"] = _content_type_for(candidate)
             return resp
-    raise web.HTTPNotFound(text="Preview not found")
+
+    # IMPORTANT: don't 404 -> return 204 so browsers don't spam console
+    return web.Response(status=204, headers={"Cache-Control": "no-store"})
 
 
 @routes.get("/vslinx/model_preview")
@@ -108,6 +107,7 @@ async def vslinx_model_preview(request: web.Request):
 
     model_file = _resolve_model_anywhere(name)
     if model_file is None:
-        raise web.HTTPNotFound(text="Model not found")
+        # IMPORTANT: don't 404 -> return 204 so browsers don't spam console
+        return web.Response(status=204, headers={"Cache-Control": "no-store"})
 
     return await _serve_preview_for_model_file(model_file)
