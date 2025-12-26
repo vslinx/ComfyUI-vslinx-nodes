@@ -1,13 +1,13 @@
 import { app } from "../../scripts/app.js";
 
-const SETTING_ID = "vslinx.loraHoverPreviews";
+const SETTING_ID = "vslinx.modelHoverPreviews";
 let enabled = false;
 
 const PREVIEW_URL = (name) =>
-  `/vslinx/model_preview/lora?name=${encodeURIComponent(name)}&t=${Date.now()}`;
+  `/vslinx/model_preview?name=${encodeURIComponent(name)}&t=${Date.now()}`;
 
 const popup = document.createElement("div");
-popup.id = "vslinx-lora-hover-preview";
+popup.id = "vslinx-model-hover-preview";
 popup.style.cssText = `
   position: fixed;
   z-index: 100000;
@@ -55,7 +55,6 @@ popup.appendChild(mediaWrap);
 document.body.appendChild(popup);
 
 let requestToken = 0;
-
 let activeMenuEl = null;
 
 const menuCloseObserver = new MutationObserver(() => {
@@ -168,9 +167,11 @@ async function showPreviewFor(name, ev) {
   testImg.src = url;
 }
 
-function isLikelyLoraMenu(menuEl) {
+function isLikelyModelMenu(menuEl) {
   const title = menuEl.querySelector(".litemenu-title")?.textContent?.toLowerCase() || "";
   if (title.includes("lora")) return true;
+  if (title.includes("checkpoint")) return true;
+  if (title.includes("model")) return true;
 
   const entries = Array.from(menuEl.querySelectorAll(".litemenu-entry"));
   const texts = entries.map((e) => (e.textContent || "").trim()).filter(Boolean);
@@ -181,14 +182,14 @@ function isLikelyLoraMenu(menuEl) {
     return tl.endsWith(".safetensors") || tl.endsWith(".pt") || tl.endsWith(".ckpt");
   }).length;
 
-  return fileLike >= Math.min(8, Math.floor(texts.length * 0.6));
+  return fileLike >= Math.min(5, Math.floor(texts.length * 0.35));
 }
 
 function attachHoverHandlers(menuEl) {
   if (menuEl.dataset.vslinxHoverPreviewAttached === "1") return;
   menuEl.dataset.vslinxHoverPreviewAttached = "1";
 
-  if (!isLikelyLoraMenu(menuEl)) return;
+  if (!isLikelyModelMenu(menuEl)) return;
 
   const entries = Array.from(menuEl.querySelectorAll(".litemenu-entry"));
   for (const entry of entries) {
@@ -214,18 +215,42 @@ function attachHoverHandlers(menuEl) {
   }
 }
 
-const observer = new MutationObserver((mutations) => {
-  if (!enabled) return;
+function scanAndAttachExistingMenus() {
+  const selectors = [
+    ".litegraph",
+    ".context-menu",
+    ".contextmenu",
+    ".litegraph-contextmenu",
+    ".litemenu",
+    ".graphcontextmenu",
+  ];
+  document.querySelectorAll(selectors.join(",")).forEach((menu) => {
+    if (menu instanceof HTMLElement) attachHoverHandlers(menu);
+  });
+}
 
+const observer = new MutationObserver((mutations) => {
   for (const m of mutations) {
     for (const node of m.addedNodes) {
       if (!(node instanceof HTMLElement)) continue;
 
       const menus = [];
-      if (node.classList.contains("litegraph") || node.classList.contains("context-menu")) {
+      if (
+        node.classList.contains("litegraph") ||
+        node.classList.contains("context-menu") ||
+        node.classList.contains("contextmenu") ||
+        node.classList.contains("litemenu") ||
+        node.classList.contains("litegraph-contextmenu") ||
+        node.classList.contains("graphcontextmenu")
+      ) {
         menus.push(node);
       }
-      menus.push(...(node.querySelectorAll?.(".litegraph, .context-menu, .contextmenu") ?? []));
+
+      menus.push(
+        ...(node.querySelectorAll?.(
+          ".litegraph, .context-menu, .contextmenu, .litemenu, .litegraph-contextmenu, .graphcontextmenu"
+        ) ?? [])
+      );
 
       for (const menu of menus) attachHoverHandlers(menu);
     }
@@ -233,12 +258,6 @@ const observer = new MutationObserver((mutations) => {
 });
 observer.observe(document.body, { childList: true, subtree: true });
 
-/**
- * Global close triggers:
- * - click/tap anywhere (selecting item or clicking outside closes menus)
- * - Escape key
- * - window blur (alt-tab)
- */
 document.addEventListener(
   "pointerdown",
   () => {
@@ -263,20 +282,29 @@ window.addEventListener("blur", () => {
 });
 
 app.registerExtension({
-  name: "vslinx.loraHoverPreviews",
+  name: "vslinx.modelHoverPreviews.compat",
   settings: [
     {
       id: SETTING_ID,
-      name: "Show hover previews in all LoRA dropdowns (images + video)",
+      name: "Show hover previews in all model dropdowns",
       type: "boolean",
       defaultValue: false,
-      category: ["vslinx", "LoRA", "Hover previews"],
+      category: ["vslinx", "Models", "Hover previews"],
       tooltip:
-        "When enabled, hovering a LoRA in dropdowns shows its preview image or video (mp4/webm) if available.",
+        "When enabled, hovering a model name in dropdowns (LoRA's, checkpoints & diffusion_models/unet) shows its preview image or video (mp4/webm) if available.",
       onChange: (newVal) => {
         enabled = !!newVal;
-        if (!enabled) hidePopup();
+        if (!enabled) {
+          hidePopup();
+        } else {
+          scanAndAttachExistingMenus();
+        }
       },
     },
   ],
+  setup() {
+    const v = app.extensionManager?.setting?.get?.(SETTING_ID);
+    enabled = !!v;
+    if (enabled) scanAndAttachExistingMenus();
+  },
 });

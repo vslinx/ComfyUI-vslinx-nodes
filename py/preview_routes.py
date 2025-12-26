@@ -11,6 +11,8 @@ MODEL_EXTS = (".safetensors", ".pt", ".ckpt")
 IMG_EXTS = (".png", ".webp", ".jpg", ".jpeg")
 VID_EXTS = (".mp4", ".webm")
 
+SEARCH_TYPES = ("loras", "checkpoints", "unet", "diffusion_models")
+
 
 def _normalize_name(name: str) -> str:
     name = name.replace("\\", "/").strip()
@@ -44,28 +46,20 @@ def _content_type_for(path: Path) -> str:
 
 
 def _candidate_paths_for_model(model_file: Path) -> list[Path]:
-    """
-    For model:
-      .../loras/Sub/Name v1.0.safetensors
-
-    Checks in same folder:
-      Name v1.0.preview.(png|webp|jpg|jpeg|mp4|webm)
-      Name v1.0.(png|webp|jpg|jpeg|mp4|webm)
-
-    And optional folder convention:
-      Name v1.0/preview.(png|...|mp4|webm)
-    """
     parent = model_file.parent
     base_name = model_file.stem
 
     candidates: list[Path] = []
 
+    # Prefer preview.* first
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(parent / f"{base_name}.preview{ext}")
 
+    # Then base.*
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(parent / f"{base_name}{ext}")
 
+    # Optional folder convention: base/preview.*
     folder = parent / base_name
     for ext in (*IMG_EXTS, *VID_EXTS):
         candidates.append(folder / f"preview{ext}")
@@ -73,29 +67,24 @@ def _candidate_paths_for_model(model_file: Path) -> list[Path]:
     return candidates
 
 
-@routes.get("/vslinx/model_preview/lora")
-async def vslinx_lora_preview(request: web.Request):
-    name = (request.query.get("name") or "").strip()
-    if not name:
-        raise web.HTTPBadRequest(text="Missing query parameter: name")
+def _resolve_model_anywhere(name: str) -> Path | None:
+    has_ext = name.lower().endswith(MODEL_EXTS)
 
-    name = _normalize_name(name)
-    if not _is_safe_relpath(name):
-        raise web.HTTPBadRequest(text="Invalid name")
+    for model_type in SEARCH_TYPES:
+        full = folder_paths.get_full_path(model_type, name)
+        if full is not None:
+            return Path(full)
 
-    full = folder_paths.get_full_path("loras", name)
+        if not has_ext:
+            for ext in MODEL_EXTS:
+                full = folder_paths.get_full_path(model_type, name + ext)
+                if full is not None:
+                    return Path(full)
 
-    if full is None and not name.lower().endswith(MODEL_EXTS):
-        for ext in MODEL_EXTS:
-            full = folder_paths.get_full_path("loras", name + ext)
-            if full is not None:
-                break
+    return None
 
-    if full is None:
-        raise web.HTTPNotFound(text="LoRA not found")
 
-    model_file = Path(full)
-
+async def _serve_preview_for_model_file(model_file: Path):
     for candidate in _candidate_paths_for_model(model_file):
         if candidate.exists():
             resp = web.FileResponse(
@@ -104,5 +93,21 @@ async def vslinx_lora_preview(request: web.Request):
             )
             resp.headers["Content-Type"] = _content_type_for(candidate)
             return resp
-
     raise web.HTTPNotFound(text="Preview not found")
+
+
+@routes.get("/vslinx/model_preview")
+async def vslinx_model_preview(request: web.Request):
+    name = (request.query.get("name") or "").strip()
+    if not name:
+        raise web.HTTPBadRequest(text="Missing query parameter: name")
+
+    name = _normalize_name(name)
+    if not _is_safe_relpath(name):
+        raise web.HTTPBadRequest(text="Invalid name")
+
+    model_file = _resolve_model_anywhere(name)
+    if model_file is None:
+        raise web.HTTPNotFound(text="Model not found")
+
+    return await _serve_preview_for_model_file(model_file)
