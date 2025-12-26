@@ -6,7 +6,7 @@ let enabled = false;
 const PREVIEW_URL = (name) =>
   `/vslinx/model_preview?name=${encodeURIComponent(name)}&t=${Date.now()}`;
 
-const MODEL_EXTS = [".safetensors", ".pt", ".ckpt"];
+const MODEL_EXTS = [".safetensors", ".pt", ".ckpt", ".gguf"];
 
 const popup = document.createElement("div");
 popup.id = "vslinx-model-hover-preview";
