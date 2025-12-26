@@ -282,7 +282,7 @@ window.addEventListener("blur", () => {
 });
 
 app.registerExtension({
-  name: "vslinx.modelHoverPreviews.compat",
+  name: "vslinx.modelHoverPreviews",
   settings: [
     {
       id: SETTING_ID,
