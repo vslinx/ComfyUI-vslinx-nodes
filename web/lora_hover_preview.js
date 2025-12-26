@@ -6,6 +6,8 @@ let enabled = false;
 const PREVIEW_URL = (name) =>
   `/vslinx/model_preview?name=${encodeURIComponent(name)}&t=${Date.now()}`;
 
+const MODEL_EXTS = [".safetensors", ".pt", ".ckpt"];
+
 const popup = document.createElement("div");
 popup.id = "vslinx-model-hover-preview";
 popup.style.cssText = `
@@ -111,10 +113,94 @@ function resetMedia() {
   vid.load();
 }
 
-/**
- * Only show popup after a valid image/video loads.
- * If neither exists (404), show nothing.
- */
+function normalizePath(s) {
+  return String(s || "")
+    .replace(/\\/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripFolderIcon(s) {
+  return String(s || "").replace(/^\s*📁\s*/u, "").trim();
+}
+
+function isLikelyModelPath(s) {
+  if (!s) return false;
+  const lower = s.toLowerCase();
+
+  if (lower === "none" || lower === "disable" || lower === "choose") return false;
+  if (lower.startsWith("open ") || lower.startsWith("load ")) return false;
+
+  return MODEL_EXTS.some((ext) => lower.endsWith(ext));
+}
+
+function getMenuItemObject(entryEl) {
+  if (!entryEl) return null;
+
+  const candidates = [
+    "data",
+    "value",
+    "_value",
+    "__value",
+    "item",
+    "__item",
+    "_item",
+    "lg_item",
+    "lg_value",
+    "menuitem",
+    "__menuitem",
+  ];
+
+  for (const k of candidates) {
+    if (entryEl[k] != null) return entryEl[k];
+  }
+
+  const dv = entryEl?.dataset?.value;
+  if (dv != null) return dv;
+
+  return null;
+}
+
+function isFolderEntry(entryEl) {
+  const txt = (entryEl?.textContent || "").trim();
+  if (txt.startsWith("📁")) return true;
+
+  const item = getMenuItemObject(entryEl);
+  if (item && typeof item === "object") {
+    if (item.has_submenu || item.submenu) return true;
+    if (item.submenu && typeof item.submenu === "object") return true;
+  }
+  return false;
+}
+
+function getModelName(entryEl) {
+  if (!entryEl) return null;
+  if (isFolderEntry(entryEl)) return null;
+
+  const item = getMenuItemObject(entryEl);
+
+  if (typeof item === "string") {
+    const v = normalizePath(stripFolderIcon(item));
+    return isLikelyModelPath(v) ? v : null;
+  }
+
+  if (item && typeof item === "object") {
+    const candidates = [item.rgthree_originalValue, item.value, item.content];
+    for (const c of candidates) {
+      if (typeof c === "string") {
+        const v = normalizePath(stripFolderIcon(c));
+        if (isLikelyModelPath(v)) return v;
+      }
+    }
+    return null;
+  }
+
+  const raw = (entryEl.textContent || "").trim();
+  const firstLine = raw.split("\n")[0].trim();
+  const v = normalizePath(stripFolderIcon(firstLine));
+  return isLikelyModelPath(v) ? v : null;
+}
+
 async function showPreviewFor(name, ev) {
   const token = ++requestToken;
   const url = PREVIEW_URL(name);
@@ -122,19 +208,30 @@ async function showPreviewFor(name, ev) {
   resetMedia();
   hidePopup();
 
-  const testImg = new Image();
+  let resp;
+  try {
+    resp = await fetch(url, { method: "HEAD", cache: "no-store" });
+  } catch {
+    return;
+  }
+  if (token !== requestToken) return;
+  if (!resp || !resp.ok) return;
 
-  testImg.onload = () => {
-    if (token !== requestToken) return;
+  const ct = (resp.headers.get("content-type") || "").toLowerCase();
+
+  if (ct.startsWith("image/")) {
+    img.onload = () => {
+      if (token !== requestToken) return;
+      img.style.display = "block";
+      vid.style.display = "none";
+      showPopup(ev);
+    };
+    img.onerror = () => {};
     img.src = url;
-    img.style.display = "block";
-    vid.style.display = "none";
-    showPopup(ev);
-  };
+    return;
+  }
 
-  testImg.onerror = () => {
-    if (token !== requestToken) return;
-
+  if (ct.startsWith("video/")) {
     const onCanPlay = () => {
       cleanup();
       if (token !== requestToken) return;
@@ -162,57 +259,44 @@ async function showPreviewFor(name, ev) {
 
     vid.src = url;
     vid.load();
-  };
-
-  testImg.src = url;
+    return;
+  }
 }
 
-function isLikelyModelMenu(menuEl) {
-  const title = menuEl.querySelector(".litemenu-title")?.textContent?.toLowerCase() || "";
-  if (title.includes("lora")) return true;
-  if (title.includes("checkpoint")) return true;
-  if (title.includes("model")) return true;
-
-  const entries = Array.from(menuEl.querySelectorAll(".litemenu-entry"));
-  const texts = entries.map((e) => (e.textContent || "").trim()).filter(Boolean);
-  if (texts.length < 5) return false;
-
-  const fileLike = texts.filter((t) => {
-    const tl = t.toLowerCase();
-    return tl.endsWith(".safetensors") || tl.endsWith(".pt") || tl.endsWith(".ckpt");
-  }).length;
-
-  return fileLike >= Math.min(5, Math.floor(texts.length * 0.35));
-}
 
 function attachHoverHandlers(menuEl) {
   if (menuEl.dataset.vslinxHoverPreviewAttached === "1") return;
   menuEl.dataset.vslinxHoverPreviewAttached = "1";
 
-  if (!isLikelyModelMenu(menuEl)) return;
-
-  const entries = Array.from(menuEl.querySelectorAll(".litemenu-entry"));
-  for (const entry of entries) {
-    if (entry.classList.contains("disabled")) continue;
-
-    entry.addEventListener("mouseenter", (ev) => {
+  menuEl.addEventListener(
+    "mouseover",
+    (ev) => {
       if (!enabled) return;
+
+      const entry = ev.target?.closest?.(".litemenu-entry");
+      if (!entry || !menuEl.contains(entry)) return;
 
       activeMenuEl = menuEl;
 
-      const raw = (entry.textContent || "").trim();
-      const name = raw.split("\n")[0].trim();
+      if (isFolderEntry(entry)) return;
+
+      const name = getModelName(entry);
       if (!name) return;
 
       showPreviewFor(name, ev);
-    });
+    },
+    true
+  );
 
-    entry.addEventListener("mousemove", (ev) => {
+  menuEl.addEventListener(
+    "mousemove",
+    (ev) => {
       if (popup.style.display !== "none") positionPopup(ev.clientX, ev.clientY);
-    });
+    },
+    true
+  );
 
-    entry.addEventListener("mouseleave", () => hidePopup());
-  }
+  menuEl.addEventListener("mouseleave", () => hidePopup(), true);
 }
 
 function scanAndAttachExistingMenus() {
