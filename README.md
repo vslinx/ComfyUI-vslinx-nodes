@@ -12,6 +12,41 @@ A set of custom nodes for ComfyUI that make workflows easier: load multiple imag
   git clone https://github.com/vslinx/ComfyUI-vslinx-nodes.git comfyui-vslinx-nodes
   ```
 
+## Settings
+#### Show hover previews in all model dropdowns
+When enabled, this feature shows a preview for the model you’re hovering with your mouse.  
+It works across **all model / LoRA loaders** and supports **`.safetensors`**, **`.ckpt`**, **`.pt`**, and **`.gguf`** files located in these folders:
+
+- `loras`
+- `checkpoints`
+- `unet`
+- `diffusion_models`
+
+It is also compatible with the **[rgthree-comfy](https://github.com/rgthree/rgthree-comfy)** node’s **“Auto Nest Subdirectories in Menus”** setting. A feature that often breaks preview behavior when combined with other custom nodes (e.g. **[ComfyUI-Custom-Scripts](https://github.com/pythongosssss/ComfyUI-Custom-Scripts)**).
+
+Preview files must be placed **in the same folder as the model** and use the **same base filename**.
+
+Supported formats:
+
+**Images**
+- `png`
+- `jpg`
+- `jpeg`
+- `webp`
+
+**Videos**
+- `mp4`
+- `webm`
+
+The extension will look for previews using the most common naming schemes:
+- `ModelName.png` / `ModelName.webm` / etc.
+- `ModelName.preview.png` / `ModelName.preview.webm` / etc.
+
+Compatible with well-known ComfyUI custom nodes/plugins that save metadata and/or previews, such as  
+**[ComfyUI-Lora-Manager](https://github.com/willmiao/ComfyUI-Lora-Manager)**.
+
+<img width="549" height="678" alt="Image" src="https://github.com/user-attachments/assets/2fbfb270-562c-48f5-a9a5-19062410da7e" />
+
 ## Nodes
 
 ### Text

@@ -1,4 +1,4 @@
-import { app } from "../../scripts/app.js";
+import { app } from "../../../scripts/app.js";
 
 const SETTING_ID = "vslinx.modelHoverPreviews";
 let enabled = false;

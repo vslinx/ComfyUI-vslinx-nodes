@@ -91,7 +91,6 @@ async def _serve_preview_for_model_file(model_file: Path):
             resp.headers["Content-Type"] = _content_type_for(candidate)
             return resp
 
-    # IMPORTANT: don't 404 -> return 204 so browsers don't spam console
     return web.Response(status=204, headers={"Cache-Control": "no-store"})
 
 
@@ -107,7 +106,6 @@ async def vslinx_model_preview(request: web.Request):
 
     model_file = _resolve_model_anywhere(name)
     if model_file is None:
-        # IMPORTANT: don't 404 -> return 204 so browsers don't spam console
         return web.Response(status=204, headers={"Cache-Control": "no-store"})
 
     return await _serve_preview_for_model_file(model_file)
