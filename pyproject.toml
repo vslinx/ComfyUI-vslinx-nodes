@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-vslinx-nodes"
 description = "Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-select dialog with preview; images upload instantly to the input folder and can be output as a list or a batch. Includes boolean AND/OR plus a boolean flip for easy branching, and nodes that bypass or mute other nodes based on a boolean value. Also includes “Fit Image into BBox Mask” to precisely fit/place an image into a mask region’s bounding box—ideal for compositing poses, objects, or partial elements—while preserving aspect ratio and offering alignment options. Adds a bridge from rgthree Power LoRA Loader to the image saver to store LoRA info in metadata, plus settings to show previews of all models & LoRAs across all model loaders - compatible with rgthree's subdirectory view."
-version = "1.5.0"
+version = "1.6.0"
 license = { file = "LICENSE" }
 
 [project.urls]

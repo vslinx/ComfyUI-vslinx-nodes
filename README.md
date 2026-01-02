@@ -66,6 +66,10 @@ It also includes a ``fail_if_empty`` property to throw an error if no elements a
 #### Load (Multiple) Images (Batch)
 This node works the same way as the [Load (Multiple) Images (List)](#load-multiple-images-list)-Node but <b>the images are returned as a batch, allowing downstream nodes to process them together.</b>
 
+#### Upscale by Factor (With Model)
+his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. Minimum is 0.1 scale while the maximum is 8.0 scale.
+<img width="1420" height="602" alt="Image" src="https://github.com/user-attachments/assets/d1845c2e-0d8b-480d-8177-7799f8259b2a" />
+
 ### Boolean
 #### Boolean AND Operator
 Provides a node with 2 boolean inputs. Outputs True only if both inputs are True. Otherwise returns False. <br>
@@ -107,6 +111,12 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.6.0
+- added new "Upscale by Factor (With Model)"-Node that upscales an image to the desired factor of it's original size by using an upscale model + ``nearest-exact``, ``bilinear`` or ``area`` upscaling to resize the image to the desired factor afterwards
+
+### v.1.5.0
+- added new setting that allows you to add previews for all model loaders (+ rgthree subfolder compatible)
+
 ### v.1.4.0
 - added the "(Impact-Pack) Multiline Wildcard Text"-Node that provides a simple multiline text field with a wildcard selector that automatically appends selected wildcards. 
 
