@@ -6,6 +6,8 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (!["vsLinx_LoadSelectedImagesList", "vsLinx_LoadSelectedImagesBatch"].includes(nodeData?.name)) return;
 
+    const FILENAME_OPTIONS = ["full filename", "deduped filename"];
+
     const origOnConnectInput = nodeType.prototype.onConnectInput;
     nodeType.prototype.onConnectInput = function (slot, type, output, originSlot) {
       const inp = this.inputs?.[slot];
@@ -30,8 +32,9 @@ app.registerExtension({
       return out;
     };
 
-    const getPathsWidget = (node) => node.widgets?.find(w => w.name === "selected_paths");
-    const getFailWidget  = (node) => node.widgets?.find(w => w.name === "fail_if_empty");
+    const getPathsWidget   = (node) => node.widgets?.find(w => w.name === "selected_paths");
+    const getFailWidget    = (node) => node.widgets?.find(w => w.name === "fail_if_empty");
+    const getNameModeWidget= (node) => node.widgets?.find(w => w.name === "filename_handling");
 
     const hideWidget = (w) => {
       if (!w) return;
@@ -40,8 +43,31 @@ app.registerExtension({
       w.computeSize = () => [0, 0];
     };
 
+    const ensureEnumProperty = (node, name, def, values) => {
+      node.properties = node.properties || {};
+
+      if (typeof node.properties[name] === "undefined") {
+        node.addProperty?.(name, def, "enum", { values });
+        if (typeof node.properties[name] === "undefined") node.properties[name] = def;
+      }
+
+      if (!values.includes(node.properties[name])) {
+        node.properties[name] = def;
+      }
+
+      node.properties_info = node.properties_info || {};
+      node.properties_info[name] = { type: "enum", values };
+
+      const ctor = node.constructor;
+      if (ctor) {
+        ctor.properties_info = ctor.properties_info || {};
+        ctor.properties_info[name] = { type: "enum", values };
+      }
+    };
+
     const ensureProps = (node) => {
       node.properties = node.properties || {};
+
       if (typeof node.properties.max_images === "undefined") {
         node.addProperty?.("max_images", 0);
         if (typeof node.properties.max_images === "undefined") node.properties.max_images = 0;
@@ -50,14 +76,21 @@ app.registerExtension({
         node.addProperty?.("fail_if_empty", true);
         if (typeof node.properties.fail_if_empty === "undefined") node.properties.fail_if_empty = true;
       }
+
+      ensureEnumProperty(node, "filename_handling", "full filename", FILENAME_OPTIONS);
     };
 
     const syncHiddenInputsFromProps = (node) => {
-      const p = getPathsWidget(node);
-      const f = getFailWidget(node);
+      const p  = getPathsWidget(node);
+      const f  = getFailWidget(node);
+      const nm = getNameModeWidget(node);
+
       hideWidget(p);
       hideWidget(f);
-      if (f) f.value = !!node.properties.fail_if_empty;
+      hideWidget(nm);
+
+      if (f)  f.value  = !!node.properties.fail_if_empty;
+      if (nm) nm.value = String(node.properties.filename_handling || "full filename");
     };
 
     const getMax = (node) => {
@@ -115,7 +148,7 @@ app.registerExtension({
             clearTimeout(timer2);
             if (resp.ok) return true;
           }
-        } catch (_) {
+        } catch {
           // ignore and retry
         }
       }
@@ -144,7 +177,7 @@ app.registerExtension({
         try {
           const img = await loadImg(url);
           imgs.push(img);
-        } catch (e) {
+        } catch {
           // unsupported codec / blocked / transient – ignore
         }
       }));
@@ -249,6 +282,12 @@ app.registerExtension({
         const fw = getFailWidget(this);
         if (fw) fw.value = !!value;
         this.properties.fail_if_empty = !!value;
+      }
+      if (name === "filename_handling") {
+        const nm = getNameModeWidget(this);
+        const pick = FILENAME_OPTIONS.includes(value) ? value : "full filename";
+        this.properties.filename_handling = pick;
+        if (nm) nm.value = pick;
       }
       return r;
     };

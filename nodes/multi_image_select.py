@@ -1,6 +1,4 @@
-import os
-import json
-import re
+import os, json, re
 from typing import List, Tuple
 import numpy as np
 from PIL import Image, ImageOps
@@ -47,58 +45,22 @@ def _parse_paths(s: str) -> List[str]:
 
 def _resolve_existing(rels: List[str]) -> Tuple[List[str], List[str]]:
     """
-    Core Optimization: Prioritize using the actual file paths from the input directory over temporary paths passed from the frontend.
+    Resolve relative paths against the input root, clamp to root,
+    and keep only files that exist and have known image extensions.
+    Returns (existing_abs_paths, missing_rel_paths).
     """
     root = os.path.abspath(_input_root()) + os.sep
     existing: List[str] = []
     missing: List[str] = []
-    
-    # First, retrieve all valid images in the input directory (for matching actual paths).
-    input_files = {}
-    for file in os.listdir(root):
-        if os.path.splitext(file)[1].lower() in IMG_EXTS:
-            # Key: filename without extension (for matching), Value: actual absolute path
-            input_files[os.path.splitext(file)[0].lower()] = os.path.join(root, file)
-
     for rel in rels:
-        # Extract the filename (without extension) from the path passed to the frontend, used to match the actual file in the input directory.
-        rel_basename = os.path.basename(rel)
-        rel_name_noext = os.path.splitext(rel_basename)[0].lower()
-        # Name after the cleaning system suffix (for fuzzy matching)
-        rel_name_clean = re.sub(r'\s*\(\d+\)$', '', rel_name_noext)
-
-        # Prioritize matching actual files in the input directory
-        real_abs_path = None
-        if rel_name_noext in input_files:
-            real_abs_path = input_files[rel_name_noext]
-        elif rel_name_clean in input_files:
-            real_abs_path = input_files[rel_name_clean]
-        else:
-            # Fallback: Resolve according to the original logic.
-            abs_path = os.path.abspath(os.path.join(root, rel))
-            ext_ok = os.path.splitext(rel)[1].lower() in IMG_EXTS
-            in_root = abs_path.startswith(root)
-            if ext_ok and in_root and os.path.isfile(abs_path):
-                real_abs_path = abs_path
-
-        if real_abs_path:
-            existing.append(real_abs_path)
-        else:
+        ext_ok = os.path.splitext(rel)[1].lower() in IMG_EXTS
+        abs_path = os.path.abspath(os.path.join(root, rel))
+        in_root = abs_path.startswith(root)
+        if not (ext_ok and in_root and os.path.isfile(abs_path)):
             missing.append(rel)
+            continue
+        existing.append(abs_path)
     return existing, missing
-
-def _clean_filename(filename: str, keep_legitimate_brackets: bool = True) -> str:
-    """
-    Precision Cleaning: Removes only the automatically added "(number)" suffix, preserving valid parentheses.
-    - keep_legitimate_brackets=True：Retain as test(1).png → test(1), only clean up test (1).png → test
-    """
-    if keep_legitimate_brackets:
-        # The regular expression only matches system suffixes ending with "space + (digit)" (e.g., "2 (2)" → "2", "test(1)" → "test(1)").
-        clean_name = re.sub(r'\s+\(\d+\)$', '', filename)
-    else:
-        # Compatibility Mode: Remove all trailing (numbers) (Not recommended)
-        clean_name = re.sub(r'\(\d+\)$', '', filename)
-    return clean_name
 
 def _fail_if_needed(existing_count: int, missing: List[str], fail_if_empty: bool, node_name: str):
     if fail_if_empty and existing_count == 0:
@@ -112,8 +74,38 @@ def _fail_if_needed(existing_count: int, missing: List[str], fail_if_empty: bool
             f"{node_name}: No valid images found. They may have been moved or deleted from the input folder.{hint}"
         )
 
+# ------------------ filename handling ------------------
+
+FILENAME_HANDLING_OPTIONS = ("full filename", "deduped filename")
+
+def _name_for_output(abs_path: str, handling: str) -> str:
+    """
+    Returns the basename WITHOUT extension per handling.
+      - 'full filename'    -> stem as-is
+      - 'deduped filename' -> stem with ONLY trailing ' (digits)' removed
+                              (space + parentheses). Legitimate 'name(2)' is kept.
+    """
+    base = os.path.basename(abs_path)
+    stem, _ext = os.path.splitext(base)
+
+    if handling == "deduped filename":
+        # remove only " space + (number)" at the end, e.g. 'cat (2)' -> 'cat'
+        stem = re.sub(r"\s+\(\d+\)$", "", stem)
+
+    # default or 'full filename' -> unchanged stem
+    return stem
+
+# -------------------------------------------------------
+
 class VSLinx_LoadSelectedImagesList:
-    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as an image list, allowing downstream nodes to process them one after another. Extra: Output filenames without extension."
+    """
+    Reads files listed in `selected_paths` and outputs:
+      - IMAGE list (each item BHWC with B=1)
+      - STRING list of filenames (without extension), per 'filename_handling'.
+    """
+    DESCRIPTION = ("Provides a simple node with a “Select Images” button that lets you choose one or multiple images. "
+                   "After selection, the images are uploaded to your input folder in ComfyUI (same as core). "
+                   "Returns images as a list and a parallel list of filenames (no extension).")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -125,10 +117,8 @@ class VSLinx_LoadSelectedImagesList:
                     "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
                 "fail_if_empty": ("BOOLEAN", {"default": True}),
+                "filename_handling": (FILENAME_HANDLING_OPTIONS, {"default": "full filename"}),
             },
-            "optional": {
-                "keep_legitimate_brackets": ("BOOLEAN", {"default": True}),  # New: Retain valid parentheses?
-            }
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -137,7 +127,13 @@ class VSLinx_LoadSelectedImagesList:
     FUNCTION = "load"
     CATEGORY = "vsLinx/image"
 
-    def load(self, selected_paths: str = "", fail_if_empty: bool = True, keep_legitimate_brackets: bool = True, **kwargs):
+    def load(
+        self,
+        selected_paths: str = "",
+        fail_if_empty: bool = True,
+        filename_handling: str = "full filename",
+        **kwargs
+    ):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
@@ -151,16 +147,13 @@ class VSLinx_LoadSelectedImagesList:
         existing, missing = _resolve_existing(rels)
         _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (List)")
 
-        images = []
-        filenames = []
+        images: List[torch.Tensor] = []
+        names: List[str] = []
         for abs_path in existing:
             try:
-                img = Image.open(abs_path)
-                images.append(_pil_to_tensor_bhwc(img))
-                # Extract real files without extensions → Precisely clean system extensions
-                raw_name = os.path.splitext(os.path.basename(abs_path))[0]
-                clean_name = _clean_filename(raw_name, keep_legitimate_brackets)
-                filenames.append(clean_name)
+                pil = Image.open(abs_path)
+                images.append(_pil_to_tensor_bhwc(pil))
+                names.append(_name_for_output(abs_path, filename_handling))
             except Exception as e:
                 print(f"[vsLinx_LoadSelectedImagesList] skip {abs_path}: {e}")
 
@@ -168,10 +161,16 @@ class VSLinx_LoadSelectedImagesList:
             _fail_if_needed(0, rels, fail_if_empty, "Load (Multiple) Images (List)")
             return ([], [])
 
-        return (images, filenames)
+        return (images, names)
 
 class VSLinx_LoadSelectedImagesBatch:
-    DESCRIPTION = "Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your input folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images. The images are returned as a batch, allowing downstream nodes to process them together. Extra: Output filenames without extension."
+    """
+    Returns a batched IMAGE tensor (B,H,W,3) and a single comma-separated
+    STRING of filenames (without extension) per 'filename_handling'.
+    All images are resized to the first image's size for a valid batch.
+    """
+    DESCRIPTION = ("Provides a simple node with a “Select Images” button for multiple selection. "
+                   "Returns an image batch and a comma-separated filenames string (no extension).")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -183,10 +182,8 @@ class VSLinx_LoadSelectedImagesBatch:
                     "placeholder": "Filled by the 'Select images' button (JSON array)."
                 }),
                 "fail_if_empty": ("BOOLEAN", {"default": True}),
+                "filename_handling": (FILENAME_HANDLING_OPTIONS, {"default": "full filename"}),
             },
-            "optional": {
-                "keep_legitimate_brackets": ("BOOLEAN", {"default": True}),  # New: Retain valid parentheses?
-            }
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -194,7 +191,13 @@ class VSLinx_LoadSelectedImagesBatch:
     FUNCTION = "load_batch"
     CATEGORY = "vsLinx/image"
 
-    def load_batch(self, selected_paths: str = "", fail_if_empty: bool = True, keep_legitimate_brackets: bool = True, **kwargs):
+    def load_batch(
+        self,
+        selected_paths: str = "",
+        fail_if_empty: bool = True,
+        filename_handling: str = "full filename",
+        **kwargs
+    ):
         if not selected_paths:
             selected_paths = kwargs.get("selected_paths", "")
 
@@ -210,14 +213,11 @@ class VSLinx_LoadSelectedImagesBatch:
         _fail_if_needed(len(existing), missing, fail_if_empty, "Load (Multiple) Images (Batch)")
 
         pil_images: List[Image.Image] = []
-        filenames = []
+        names: List[str] = []
         for abs_path in existing:
             try:
                 pil_images.append(Image.open(abs_path))
-                # Extract real files without extensions → Precisely clean system extensions
-                raw_name = os.path.splitext(os.path.basename(abs_path))[0]
-                clean_name = _clean_filename(raw_name, keep_legitimate_brackets)
-                filenames.append(clean_name)
+                names.append(_name_for_output(abs_path, filename_handling))
             except Exception as e:
                 print(f"[vsLinx_LoadSelectedImagesBatch] skip {abs_path}: {e}")
 
@@ -232,18 +232,14 @@ class VSLinx_LoadSelectedImagesBatch:
         tensors = [_pil_to_tensor_bhwc(im) for im in pil_images]
         batch = torch.cat(tensors, dim=0)
 
-        filenames_str = ", ".join(filenames)
-
+        filenames_str = ", ".join(names)
         return (batch, filenames_str)
 
 NODE_CLASS_MAPPINGS = {
     "vsLinx_LoadSelectedImagesList": VSLinx_LoadSelectedImagesList,
     "vsLinx_LoadSelectedImagesBatch": VSLinx_LoadSelectedImagesBatch,
 }
-
 NODE_DISPLAY_NAME_MAPPINGS = {
     "vsLinx_LoadSelectedImagesList": "Load (Multiple) Images (List)",
     "vsLinx_LoadSelectedImagesBatch": "Load (Multiple) Images (Batch)",
 }
-
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
