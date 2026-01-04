@@ -74,8 +74,6 @@ def _fail_if_needed(existing_count: int, missing: List[str], fail_if_empty: bool
             f"{node_name}: No valid images found. They may have been moved or deleted from the input folder.{hint}"
         )
 
-# ------------------ filename handling ------------------
-
 FILENAME_HANDLING_OPTIONS = ("full filename", "deduped filename")
 
 def _name_for_output(abs_path: str, handling: str) -> str:
@@ -89,13 +87,9 @@ def _name_for_output(abs_path: str, handling: str) -> str:
     stem, _ext = os.path.splitext(base)
 
     if handling == "deduped filename":
-        # remove only " space + (number)" at the end, e.g. 'cat (2)' -> 'cat'
         stem = re.sub(r"\s+\(\d+\)$", "", stem)
 
-    # default or 'full filename' -> unchanged stem
     return stem
-
-# -------------------------------------------------------
 
 class VSLinx_LoadSelectedImagesList:
     """

@@ -52,7 +52,7 @@ Compatible with well-known ComfyUI custom nodes/plugins that save metadata and/o
 ### Text
 #### (Impact-Pack) Multiline Wildcard Text
 Provides a simple multiline text field with a wildcard selector that automatically appends selected wildcards. This node uses the API endpoint from the [Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack) custom node to provide a dropdown that lets you select wildcards to be added to your prompt.  
-This node does not resolve these wildcards by itself and is intended to be passed into the **“Populated Prompt”** field in the Impact-Pack **“ImpactWildcardProcessor”** node.
+This node does not resolve these wildcards by itself and is intended to be passed into the **“Populated Prompt”** field in the Impact-Pack **“ImpactWildcardProcessor”** node.<br>
 <img width="1562" height="447" alt="Image" src="https://github.com/user-attachments/assets/27c5e3e3-4e51-450e-b91d-6f3ef48b2f28" />
 
 ### Image
@@ -60,11 +60,19 @@ This node does not resolve these wildcards by itself and is intended to be passe
 Provides a simple node with a “Select Images” button that lets you choose one or multiple images. After selection, the images are uploaded to your ``input`` folder in ComfyUI (the same behavior as the default Load Image node). The node also includes a preview of the selected images: you can click on an image to switch from the tile view to a full image view. Clicking the X returns you to the tile view, while the numbering in the bottom-right corner allows you to switch between images. <br>
 The node includes a ``max_images`` property that defines how many images can be loaded. If set to 0 or left empty, the number of allowed images is unlimited. <br>
 It also includes a ``fail_if_empty`` property to throw an error if no elements are being passed, likely caused by images having been deleted or moved from the input folder.
-<b>The images are returned as an image list, allowing downstream nodes to process them one after another.</b> <br>
+Furthermore includes a ``filename_handling`` property that lets you control how the filenames are being output.
+- ``full filename`` will output the full filename without it's extension<br>
+``image (1).png`` will return ``image (1)``
+- ``deduped filename`` will return the filename while removing any automatically appended `` (incrementing number)`` elements that are added when uploading more than 1 picture with the same filename + extension to the comfyui/input folder.
+
+<b>The images and filenames are returned as a list</b>, allowing downstream nodes to process them one after another. <br>
 <img width="1040" height="510" alt="Image" src="https://github.com/user-attachments/assets/83d6c60c-5069-4c3b-9886-0f4cefb64df9" />
 
 #### Load (Multiple) Images (Batch)
-This node works the same way as the [Load (Multiple) Images (List)](#load-multiple-images-list)-Node but <b>the images are returned as a batch, allowing downstream nodes to process them together.</b>
+This node works the same way as the [Load (Multiple) Images (List)](#load-multiple-images-list)-Node but <b>the images are returned as a batch</b>, allowing downstream nodes to process them together while the <b>filenames are returned as a string of all filenames seperated by a comma</b>. <br>
+
+Note that a batch is a tensor of the same shape, if your images have different heights and width they'll be resized to fit one common size of the first image, even if that means that they'll get cropped, resized or padded. <br>
+**Using a batch always implies using uniform dimensions!**
 
 #### Upscale by Factor (With Model)
 his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. Minimum is 0.1 scale while the maximum is 8.0 scale.
@@ -111,6 +119,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.6.1
+- added filename export for ``Load (Multiple) Images (List)`` and ``Load (Multiple) Images (Batch)`` with a node-property to also dedupe the filename to remove `` (number)`` from the name in case of a duplicate filename 
+
 ### v.1.6.0
 - added new "Upscale by Factor (With Model)"-Node that upscales an image to the desired factor of it's original size by using an upscale model + ``nearest-exact``, ``bilinear`` or ``area`` upscaling to resize the image to the desired factor afterwards
 
