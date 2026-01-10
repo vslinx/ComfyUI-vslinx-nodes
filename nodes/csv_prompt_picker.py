@@ -10,7 +10,6 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
-
 class AnyType(str):
     def __eq__(self, other) -> bool:
         return True
@@ -18,9 +17,7 @@ class AnyType(str):
     def __ne__(self, other) -> bool:
         return False
 
-
 any_type = AnyType("*")
-
 
 class FlexibleOptionalInputType(dict):
     def __init__(self, type=any_type, data=None):
@@ -35,17 +32,14 @@ class FlexibleOptionalInputType(dict):
             return dict.__getitem__(self, item)
         return (self._default_type,)
 
-
 PROMPTFILES_SUBDIR = "csv"
 _ALLOWED_EXTS = (".csv",)
 _CACHE: Dict[str, Dict[str, object]] = {}
-
 
 def get_promptfiles_dir() -> str:
     d = os.path.join(folder_paths.get_input_directory(), PROMPTFILES_SUBDIR)
     os.makedirs(d, exist_ok=True)
     return d
-
 
 def sanitize_prompt_filename(name: str) -> str:
     name = os.path.basename((name or "").replace("\\", "/"))
@@ -57,7 +51,6 @@ def sanitize_prompt_filename(name: str) -> str:
     if not name:
         raise ValueError("Invalid filename")
     return name
-
 
 def sanitize_prompt_relpath(rel: str) -> str:
     rel = (rel or "").replace("\\", "/").strip()
@@ -90,7 +83,6 @@ def sanitize_prompt_relpath(rel: str) -> str:
 
     return cleaned
 
-
 def try_decode_bytes(data: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
@@ -98,7 +90,6 @@ def try_decode_bytes(data: bytes) -> str:
         except Exception:
             pass
     return data.decode("utf-8", errors="replace")
-
 
 def parse_csv_labels_map(path: str) -> Tuple[List[str], Dict[str, str]]:
     with open(path, "rb") as f:
@@ -130,13 +121,11 @@ def parse_csv_labels_map(path: str) -> Tuple[List[str], Dict[str, str]]:
 
     return labels, mapping
 
-
 def parse_promptfile_labels_map(path: str) -> Tuple[List[str], Dict[str, str]]:
     low = path.lower()
     if low.endswith(".csv"):
         return parse_csv_labels_map(path)
     raise ValueError("Unsupported file type")
-
 
 def get_cached_promptfile(filename: str) -> Tuple[List[str], Dict[str, str]]:
     folder = get_promptfiles_dir()
@@ -153,12 +142,10 @@ def get_cached_promptfile(filename: str) -> Tuple[List[str], Dict[str, str]]:
     _CACHE[filename] = {"mtime": mtime, "labels": labels, "map": mapping}
     return labels, mapping
 
-
 def sha256_bytes(data: bytes) -> str:
     h = hashlib.sha256()
     h.update(data)
     return h.hexdigest()
-
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -167,10 +154,8 @@ def sha256_file(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-
 def invalidate_file_caches(filename: str):
     _CACHE.pop(filename, None)
-
 
 def find_existing_filename_by_hash(content_hash: str) -> Optional[str]:
     folder = get_promptfiles_dir()
@@ -190,7 +175,6 @@ def find_existing_filename_by_hash(content_hash: str) -> Optional[str]:
     except Exception:
         pass
     return None
-
 
 def suggest_copy_name(original_filename: str) -> str:
     folder = get_promptfiles_dir()
@@ -300,7 +284,6 @@ async def vslinx_csv_prompt_upload(request: web.Request):
 
     return web.json_response({"error": f"Invalid mode '{mode}'"}, status=400)
 
-
 @PromptServer.instance.routes.get("/vslinx/csv_prompt_read")
 async def vslinx_csv_prompt_read(request: web.Request):
     filename = request.rel_url.query.get("filename", "")
@@ -317,7 +300,6 @@ async def vslinx_csv_prompt_read(request: web.Request):
         return web.json_response({"error": "File not found."}, status=404)
     except Exception as e:
         return web.json_response({"error": f"Failed to parse file: {e}"}, status=500)
-
 
 @PromptServer.instance.routes.get("/vslinx/csv_prompt_list")
 async def vslinx_csv_prompt_list(request: web.Request):
@@ -342,7 +324,6 @@ async def vslinx_csv_prompt_list(request: web.Request):
         return web.json_response({"files": files})
     except Exception as e:
         return web.json_response({"error": f"Failed to list files: {e}"}, status=500)
-
 
 def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
     key = row.get("key", None)
@@ -369,7 +350,6 @@ def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
         out.append(s)
     return out
 
-
 class VSLinx_MultiLangPromptPicker:
     CATEGORY = "vsLinx/utility"
     FUNCTION = "run"
@@ -380,13 +360,15 @@ class VSLinx_MultiLangPromptPicker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "Add comma at end?": ("BOOLEAN", {"default": True}),
+                "Join with commas?": ("BOOLEAN", {"default": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "display": "seed"}),
             },
             "optional": FlexibleOptionalInputType(
                 type=any_type,
                 data={
-                    "pre_text": ("STRING", {"forceInput": True}),
+                    "pre_prompt": ("STRING", {"forceInput": True}),
+                    "pre_selection": ("STRING", {"forceInput": True}),
+                    "pre_preview": ("STRING", {"forceInput": True}),
                 },
             ),
         }
@@ -398,16 +380,20 @@ class VSLinx_MultiLangPromptPicker:
         return None
 
     def run(self, **kwargs):
-        add_comma_at_end = bool(kwargs.get("Add comma at end?", True))
+        join_with_commas = bool(kwargs.get("Join with commas?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
-        pre_text = kwargs.get("pre_text", "")
-        if pre_text is None:
-            pre_text = ""
-        if not isinstance(pre_text, str):
-            pre_text = str(pre_text)
-        pre_text = pre_text.strip()
+        def _as_clean_str(v: Any) -> str:
+            if v is None:
+                return ""
+            if not isinstance(v, str):
+                v = str(v)
+            return v.strip()
+
+        pre_prompt = _as_clean_str(kwargs.get("pre_prompt", ""))
+        pre_selection = _as_clean_str(kwargs.get("pre_selection", ""))
+        pre_preview = _as_clean_str(kwargs.get("pre_preview", ""))
 
         if control_after_generate == "randomize":
             eff_seed = time.time_ns() & 0xFFFFFFFFFFFFFFFF
@@ -442,15 +428,14 @@ class VSLinx_MultiLangPromptPicker:
         items.sort(key=lambda t: (t[0], t[1]))
 
         final_parts: List[str] = []
-        sel_preview: List[str] = []
-        out_preview: List[str] = []
+        sel_preview_lines: List[str] = []
+        out_preview_lines: List[str] = []
 
         for _, _, v in items:
             vtype = v.get("type")
 
             if vtype == "CsvRowWidget":
                 filename = v.get("file")
-
                 if not filename or not isinstance(filename, str):
                     continue
 
@@ -469,7 +454,6 @@ class VSLinx_MultiLangPromptPicker:
 
                 for original_key in selected_keys:
                     key = original_key
-
                     if key == "Random":
                         key = rng.choice(labels)
 
@@ -477,8 +461,8 @@ class VSLinx_MultiLangPromptPicker:
                     if out and isinstance(out, str) and out.strip():
                         out = out.strip()
                         final_parts.append(out)
-                        sel_preview.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
-                        out_preview.append(f"💬 {out}")
+                        sel_preview_lines.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
+                        out_preview_lines.append(f"💬 {out}")
 
                 continue
 
@@ -486,41 +470,62 @@ class VSLinx_MultiLangPromptPicker:
                 text = v.get("text", "")
                 if not isinstance(text, str):
                     text = str(text)
-
                 text = text.strip()
                 if not text:
                     continue
 
                 final_parts.append(text)
 
-                sel_preview.append("📝 Additional prompt")
+                sel_preview_lines.append("📝 Additional prompt")
                 first_line = text.splitlines()[0].strip() if text.splitlines() else text
                 if len(first_line) > 120:
                     first_line = first_line[:117] + "..."
-                out_preview.append(f"💬 {first_line}")
+                out_preview_lines.append(f"💬 {first_line}")
 
-        prompt_body = ", ".join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
+        sep = ", " if join_with_commas else " "
+        prompt_body = sep.join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
 
-        if pre_text and prompt_body:
-            if pre_text.rstrip().endswith((",", "，")):
-                prompt = pre_text.rstrip() + " " + prompt_body
+        if join_with_commas and prompt_body:
+            if not prompt_body.rstrip().endswith(","):
+                prompt_body = prompt_body.rstrip() + ","
+
+        if pre_prompt and prompt_body:
+            if join_with_commas:
+                if pre_prompt.rstrip().endswith((",", "，")):
+                    prompt = pre_prompt.rstrip() + " " + prompt_body
+                else:
+                    prompt = pre_prompt.rstrip() + ", " + prompt_body
             else:
-                prompt = pre_text.rstrip() + ", " + prompt_body
-        elif pre_text:
-            prompt = pre_text
+                prompt = pre_prompt.rstrip() + " " + prompt_body
+        elif pre_prompt:
+            prompt = pre_prompt
         else:
             prompt = prompt_body
 
-        if add_comma_at_end and prompt:
-            if not prompt.rstrip().endswith(","):
-                prompt += ","
+        node_selection_text = "\n".join(sel_preview_lines) if sel_preview_lines else "No selections"
+        node_preview_text = "\n".join(out_preview_lines) if out_preview_lines else "No output"
+
+        if pre_selection:
+            if node_selection_text:
+                selection_preview = pre_selection.rstrip() + "\n" + node_selection_text
+            else:
+                selection_preview = pre_selection
+        else:
+            selection_preview = node_selection_text
+
+        if pre_preview:
+            if node_preview_text:
+                output_preview = pre_preview.rstrip() + "\n" + node_preview_text
+            else:
+                output_preview = pre_preview
+        else:
+            output_preview = node_preview_text
 
         return (
             prompt,
-            "\n".join(sel_preview) if sel_preview else "No selections",
-            "\n".join(out_preview) if out_preview else "No output",
+            selection_preview,
+            output_preview,
         )
-
 
 NODE_CLASS_MAPPINGS = {
     "vsLinx_MultiLangPromptPicker": VSLinx_MultiLangPromptPicker,
