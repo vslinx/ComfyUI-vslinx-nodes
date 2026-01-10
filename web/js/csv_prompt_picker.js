@@ -222,7 +222,8 @@ async function _vslinxFindHitsInFile(filename, needleRaw) {
 
   for (const lab of (data.labels || [])) {
     const t = String(lab ?? "").trim();
-    if (!t || t === "(None)" || t === "Random") continue;
+    if (!t || t === "(None)" || t === "Random") continue;   
+
     if (_vslinxNorm(t).includes(needle)) {
       const key = _vslinxNorm(t);
       if (!seen.has(key)) {
@@ -231,20 +232,6 @@ async function _vslinxFindHitsInFile(filename, needleRaw) {
       }
     }
   }
-
-  try {
-    for (const [, v] of Object.entries(data.map || {})) {
-      for (const tok of _vslinxSplitCommaTokens(v)) {
-        if (_vslinxNorm(tok).includes(needle)) {
-          const key = _vslinxNorm(tok);
-          if (!seen.has(key)) {
-            seen.add(key);
-            hits.push(tok);
-          }
-        }
-      }
-    }
-  } catch (_) { }
 
   return hits;
 }
@@ -479,444 +466,511 @@ function showConflictModal({ filename, suggested }) {
   });
 }
 
-function showFilePickerModal(files, current = "") {
+function showFilePickerModal(allFiles, nodeExistingFiles = [], activeFile = null, defaultMulti = false) {
   return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.inset = "0";
-    overlay.style.background = "rgba(0,0,0,0.55)";
-    overlay.style.zIndex = "999999";
-    overlay.style.display = "flex";
-    overlay.style.alignItems = "center";
-    overlay.style.justifyContent = "center";
 
-    const card = document.createElement("div");
-    card.style.width = "620px";
-    card.style.maxWidth = "94vw";
-    card.style.maxHeight = "84vh";
-    card.style.background = "#1f1f1f";
-    card.style.border = "1px solid #444";
-    card.style.borderRadius = "12px";
-    card.style.padding = "14px";
-    card.style.color = "#eee";
-    card.style.fontFamily = "sans-serif";
-    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
-    card.style.display = "flex";
-    card.style.flexDirection = "column";
-    card.style.gap = "10px";
+    const multiSelected = new Set(nodeExistingFiles);
+    let isMulti = defaultMulti;
+    let inContentsMode = false;
 
-    const title = document.createElement("div");
-    title.textContent = "Select CSV file (input/csv)";
-    title.style.fontSize = "15px";
-    title.style.fontWeight = "600";
+    const expandedFolders = new Set();
+    const filesToExpand = new Set([...nodeExistingFiles]);
+    if (activeFile) filesToExpand.add(activeFile);
 
-    const searchRow = document.createElement("div");
-    searchRow.style.display = "flex";
-    searchRow.style.gap = "10px";
-    searchRow.style.alignItems = "stretch";
-
-    const search = document.createElement("input");
-    search.type = "text";
-    search.placeholder = "Search...";
-    search.style.flex = "1 1 auto";
-    search.style.height = "40px";
-    search.style.padding = "10px";
-    search.style.borderRadius = "10px";
-    search.style.border = "1px solid #555";
-    search.style.background = "#2b2b2b";
-    search.style.color = "#eee";
-    search.style.outline = "none";
-
-    const inContentsBtn = document.createElement("button");
-    inContentsBtn.type = "button";
-    inContentsBtn.textContent = "In Contents?";
-    inContentsBtn.title = "Search inside CSV contents (both columns)";
-    inContentsBtn.style.flex = "0 0 auto";
-    inContentsBtn.style.width = "120px";
-    inContentsBtn.style.height = "40px";
-    inContentsBtn.style.borderRadius = "10px";
-    inContentsBtn.style.border = "1px solid #555";
-    inContentsBtn.style.background = "#2b2b2b";
-    inContentsBtn.style.color = "#eee";
-    inContentsBtn.style.cursor = "pointer";
-    inContentsBtn.style.userSelect = "none";
-    inContentsBtn.style.whiteSpace = "nowrap";
-    inContentsBtn.style.padding = "0 12px";
-    inContentsBtn.style.fontSize = "12px";
-
-    inContentsBtn._active = false;
-
-    function setInContentsVisual() {
-      if (inContentsBtn._active) {
-        inContentsBtn.style.border = "1px solid #2d7a40";
-        inContentsBtn.style.boxShadow = "0 0 0 1px rgba(45,122,64,0.35)";
-        inContentsBtn.style.background = "#1f3a25";
-      } else {
-        inContentsBtn.style.border = "1px solid #555";
-        inContentsBtn.style.boxShadow = "none";
-        inContentsBtn.style.background = "#2b2b2b";
+    for (const f of filesToExpand) {
+      if (!f) continue;
+      const parts = f.split('/');
+      parts.pop(); 
+      let pathAccumulator = "";
+      for (const folder of parts) {
+        pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
+        expandedFolders.add(pathAccumulator);
       }
     }
 
-    setInContentsVisual();
-
-    searchRow.appendChild(search);
-    searchRow.appendChild(inContentsBtn);
-
-
-    const list = document.createElement("div");
-    list.style.flex = "1";
-    list.style.overflow = "auto";
-    list.style.border = "1px solid #333";
-    list.style.borderRadius = "10px";
-    list.style.background = "#181818";
-
-    const footer = document.createElement("div");
-    footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
-    footer.style.gap = "8px";
-
-    const cancel = document.createElement("button");
-    cancel.textContent = "Cancel";
-    cancel.style.padding = "8px 10px";
-    cancel.style.borderRadius = "10px";
-    cancel.style.border = "1px solid #555";
-    cancel.style.background = "#2b2b2b";
-    cancel.style.color = "#eee";
-    cancel.style.cursor = "pointer";
-
-    cancel.onclick = () => {
-      document.body.removeChild(overlay);
-      resolve(null);
-    };
-
-    overlay.onclick = (e) => {
-      if (e.target === overlay) cancel.onclick();
-    };
-
-    let renderSeq = 0;
-
-    const expanded = new Set();
-    expanded.add("");
-
-    function buildTree(paths) {
-      const root = { name: "", path: "", dirs: new Map(), files: [] };
-
-      for (const pRaw of (paths || [])) {
-        const p = String(pRaw ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
-        if (!p) continue;
-
-        const parts = p.split("/").filter(Boolean);
-        if (!parts.length) continue;
-
-        let node = root;
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          const isLast = (i === parts.length - 1);
-
-          if (isLast) {
-            node.files.push({
-              name: part,
-              path: parts.slice(0, i).join("/") ? (parts.slice(0, i).join("/") + "/" + part) : part
-            });
-          } else {
-            const dirPath = parts.slice(0, i + 1).join("/");
-            if (!node.dirs.has(part)) {
-              node.dirs.set(part, { name: part, path: dirPath, dirs: new Map(), files: [] });
-            }
-            node = node.dirs.get(part);
+    function buildFileTree(files) {
+      const root = { folders: {}, files: [] };
+      for (const f of files) {
+        const parts = f.split('/');
+        const fileName = parts.pop();
+        let current = root;
+        let pathAccumulator = "";
+        for (const folder of parts) {
+          pathAccumulator = pathAccumulator ? `${pathAccumulator}/${folder}` : folder;
+          if (!current.folders[folder]) {
+            current.folders[folder] = {
+              name: folder,
+              fullPath: pathAccumulator,
+              folders: {},
+              files: []
+            };
           }
+          current = current.folders[folder];
         }
+        current.files.push({ name: fileName, fullPath: f });
       }
-
       return root;
     }
 
     function sortTree(node) {
-      node.files.sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()));
-      const dirsArr = Array.from(node.dirs.values());
-      dirsArr.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-      node._dirsSorted = dirsArr;
-      for (const d of dirsArr) sortTree(d);
+      const folderKeys = Object.keys(node.folders).sort((a, b) => a.localeCompare(b));
+      const sortedFolders = folderKeys.map(k => {
+        sortTree(node.folders[k]);
+        return node.folders[k];
+      });
+      node.files.sort((a, b) => a.name.localeCompare(b.name));
+      return { folders: sortedFolders, files: node.files };
     }
 
-    function renderRowBase({ isFolder, label, subLabel = "", depth = 0, isActive = false, danger = false }) {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "10px 12px";
-      row.style.cursor = "pointer";
-      row.style.borderBottom = "1px solid #222";
-      row.style.whiteSpace = "nowrap";
-      row.style.overflow = "hidden";
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
 
-      row.style.paddingLeft = `${12 + depth * 16}px`;
+    const card = document.createElement("div");
+    card.style.cssText = "width:720px;max-width:94vw;max-height:86vh;background:#1f1f1f;border:1px solid #444;border-radius:12px;padding:14px;color:#eee;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:10px;";
 
-      if (isActive) {
-        row.style.background = "#2a2a2a";
-        row.style.fontWeight = "600";
-      }
+    const title = document.createElement("div");
+    title.innerHTML = `Select CSV File <span style="font-weight:400;opacity:0.6;font-size:0.85em;margin-left:8px;">(Root: input/csv)</span>`;
+    title.style.cssText = "font-size:15px;font-weight:600;";
 
-      row.onmouseenter = () => (row.style.background = isActive ? "#2f2f2f" : (danger ? "#2a1e1e" : "#232323"));
-      row.onmouseleave = () => (row.style.background = isActive ? "#2a2a2a" : "transparent");
+    const toolBar = document.createElement("div");
+    toolBar.style.cssText = "display:flex;gap:8px;align-items:stretch;";
 
-      const icon = document.createElement("span");
-      icon.textContent = isFolder ? "📁" : "📄";
-      icon.style.opacity = "0.9";
-      icon.style.flex = "0 0 auto";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.placeholder = "Search filenames...";
+    searchInput.style.cssText = "flex:1;height:38px;padding:0 10px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;outline:none;";
 
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = label;
-      nameSpan.style.flex = "0 1 auto";
-      nameSpan.style.overflow = "hidden";
-      nameSpan.style.textOverflow = "ellipsis";
+    const contentBtn = document.createElement("button");
+    contentBtn.textContent = "In Contents?";
+    contentBtn.title = "Search inside CSV contents (Keys only)";
+    contentBtn.style.cssText = "padding:0 12px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;font-size:12px;white-space:nowrap;";
 
-      row.appendChild(icon);
-      row.appendChild(nameSpan);
+    const multiBtn = document.createElement("button");
+    multiBtn.style.cssText = "width:38px;height:38px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;display:grid;place-items:center;padding:0;font-size:16px;";
 
-      if (subLabel) {
-        const sub = document.createElement("span");
-        sub.textContent = subLabel;
-        sub.style.opacity = "0.55";
-        sub.style.fontSize = "12px";
-        sub.style.flex = "1 1 auto";
-        sub.style.overflow = "hidden";
-        sub.style.textOverflow = "ellipsis";
-        sub.style.minWidth = "0";
-        row.appendChild(sub);
+    function updateMultiVisual() {
+      if (isMulti) {
+        multiBtn.textContent = "✓";
+        multiBtn.title = "Multi-select ON";
+        multiBtn.style.background = "#1f3a25";
+        multiBtn.style.borderColor = "#2d7a40";
       } else {
-        const spacer = document.createElement("span");
-        spacer.style.flex = "1 1 auto";
-        row.appendChild(spacer);
+        multiBtn.textContent = "⧉";
+        multiBtn.title = "Single-select (Replace)";
+        multiBtn.style.background = "#2b2b2b";
+        multiBtn.style.borderColor = "#555";
       }
+    }
+    updateMultiVisual();
+    multiBtn.onclick = () => { isMulti = !isMulti; updateMultiVisual(); renderList(); };
+
+    contentBtn.onclick = () => {
+      inContentsMode = !inContentsMode;
+      if (inContentsMode) {
+        contentBtn.style.background = "#1f3a25";
+        contentBtn.style.borderColor = "#2d7a40";
+        searchInput.placeholder = "Search content (Keys)...";
+      } else {
+        contentBtn.style.background = "#2b2b2b";
+        contentBtn.style.borderColor = "#555";
+        searchInput.placeholder = "Search filenames...";
+      }
+      renderList();
+    };
+
+    toolBar.append(searchInput, contentBtn, multiBtn);
+
+    const listContainer = document.createElement("div");
+    listContainer.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:8px;background:#181818;min-height:240px;";
+
+    const footer = document.createElement("div");
+    footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;padding-top:4px;";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #555;background:#2b2b2b;color:#eee;cursor:pointer;";
+
+    const applyBtn = document.createElement("button");
+    applyBtn.textContent = "Apply";
+    applyBtn.style.cssText = "padding:8px 14px;border-radius:8px;border:1px solid #2d7a40;background:#1f3a25;color:#eee;cursor:pointer;font-weight:600;";
+
+    function createRow(text, fullPath, isFolder, depth, isMatch = false, subText = "") {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;padding:6px 12px;border-bottom:1px solid #222;cursor:pointer;user-select:none;";
+      row.style.paddingLeft = `${12 + depth * 20}px`;
+
+      const isActiveRowFile = (fullPath === activeFile);
+      const isMultiSelected = isMulti && multiSelected.has(fullPath);
+      const isUsedInNode = nodeExistingFiles.includes(fullPath);
+
+      if (isActiveRowFile && !isFolder) {
+        row.style.background = "rgba(70, 130, 180, 0.25)";
+        row.style.borderLeft = "3px solid #4a90e2";
+        row.style.paddingLeft = `${9 + depth * 20}px`;
+      } else if (isMultiSelected && !isFolder) {
+        row.style.background = "#242e25";
+      }
+
+      const iconArea = document.createElement("div");
+      iconArea.style.cssText = "width:20px;height:20px;margin-right:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;color:#888;";
+
+      if (isFolder) {
+        const isExpanded = expandedFolders.has(fullPath);
+        iconArea.textContent = isExpanded ? "▼" : "▶";
+        iconArea.style.fontSize = "10px";
+        row.style.background = "#1a1a1a";
+        row.style.color = "#ccc";
+      } else {
+        const showCheck = isMulti ? isMultiSelected : isUsedInNode;
+
+        iconArea.style.border = showCheck ? "1px solid #4caf50" : "1px solid #555";
+        iconArea.style.borderRadius = "4px";
+        iconArea.style.background = showCheck ? "rgba(76, 175, 80, 0.2)" : "transparent";
+        iconArea.textContent = showCheck ? "✓" : "";
+        iconArea.style.color = showCheck ? "#4caf50" : "transparent";
+      }
+
+      const textCol = document.createElement("div");
+      textCol.style.cssText = "flex:1;overflow:hidden;";
+
+      const mainText = document.createElement("div");
+      mainText.textContent = text;
+      mainText.style.cssText = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#eee;";
+      if (isFolder) mainText.style.fontWeight = "600";
+      if (isActiveRowFile) mainText.style.fontWeight = "700";
+
+      textCol.appendChild(mainText);
+
+      if (subText) {
+        const sub = document.createElement("div");
+        sub.textContent = subText;
+        sub.style.cssText = "font-size:11px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        textCol.appendChild(sub);
+      }
+
+      row.appendChild(iconArea);
+      row.appendChild(textCol);
+
+      row.onmouseenter = () => { if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = "#2a2a2a"; };
+      row.onmouseleave = () => {
+        if (!isActiveRowFile && !isMultiSelected) row.style.backgroundColor = isFolder ? "#1a1a1a" : "transparent";
+        if (isActiveRowFile) row.style.backgroundColor = "rgba(70, 130, 180, 0.25)";
+        if (isMultiSelected && !isActiveRowFile) row.style.backgroundColor = "#242e25";
+      };
+
+      row.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+
+        if (isFolder) {
+          if (expandedFolders.has(fullPath)) expandedFolders.delete(fullPath);
+          else expandedFolders.add(fullPath);
+          renderList();
+          return;
+        }
+
+        if (isMulti) {
+          if (multiSelected.has(fullPath)) {
+            multiSelected.delete(fullPath);
+          } else {
+            multiSelected.add(fullPath);
+          }
+          renderList();
+        } else {
+          document.body.removeChild(overlay);
+          resolve({ mode: 'single', files: [fullPath] });
+        }
+      };
 
       return row;
     }
 
-    function renderEmpty(text) {
-      list.innerHTML = "";
-      const empty = document.createElement("div");
-      empty.textContent = text;
-      empty.style.padding = "10px";
-      empty.style.opacity = "0.8";
-      list.appendChild(empty);
-    }
-
-    function flattenTreeVisible(node, out, depth = 0) {
-      const dirs = node._dirsSorted || Array.from(node.dirs.values());
-      for (const d of dirs) {
-        out.push({ kind: "dir", depth, name: d.name, path: d.path, node: d });
-        if (expanded.has(d.path)) {
-          flattenTreeVisible(d, out, depth + 1);
+    function renderTree(container, node, depth) {
+      const sorted = sortTree(node);
+      for (const folder of sorted.folders) {
+        container.appendChild(createRow(folder.name, folder.fullPath, true, depth));
+        if (expandedFolders.has(folder.fullPath)) {
+          renderTree(container, folder, depth + 1);
         }
       }
-
-      for (const f of (node.files || [])) {
-        out.push({ kind: "file", depth, name: f.name, path: f.path });
+      for (const file of sorted.files) {
+        container.appendChild(createRow(file.name, file.fullPath, false, depth));
       }
     }
 
-    function ensurePathExpandedForCurrent(cur) {
-      const p = String(cur ?? "").replace(/\\/g, "/");
-      if (!p || !p.includes("/")) return;
-      const parts = p.split("/").filter(Boolean);
-      let acc = "";
-      for (let i = 0; i < parts.length - 1; i++) {
-        acc = acc ? (acc + "/" + parts[i]) : parts[i];
-        expanded.add(acc);
-      }
-    }
-
-    async function render(filterText, inContentsMode) {
+    let renderSeq = 0;
+    async function renderList() {
       const mySeq = ++renderSeq;
-
-      const qRaw = (filterText || "").trim();
+      const qRaw = searchInput.value.trim();
       const q = qRaw.toLowerCase();
 
-      ensurePathExpandedForCurrent(current);
+      listContainer.innerHTML = "";
 
-      if (!inContentsMode) {
-        if (q) {
-          list.innerHTML = "";
-          const shown = (files || []).filter((fn) => !q || String(fn).toLowerCase().includes(q));
-          if (!shown.length) {
-            renderEmpty("No matching files.");
-            return;
+      if (inContentsMode && qRaw) {
+        const loading = document.createElement("div");
+        loading.textContent = "Searching keys in all files...";
+        loading.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+        listContainer.appendChild(loading);
+
+        const results = [];
+        for (const fn of allFiles) {
+          if (mySeq !== renderSeq) return; 
+          try {
+            const hits = await _vslinxFindHitsInFile(fn, qRaw);
+            if (hits && hits.length) results.push({ fn, hits });
+          } catch (e) {
+            console.error(e);
           }
-
-          for (const fn of shown) {
-            const isActive = (String(fn) === String(current));
-            const row = renderRowBase({
-              isFolder: false,
-              label: fn,
-              depth: 0,
-              isActive,
-            });
-
-            row.onclick = () => {
-              document.body.removeChild(overlay);
-              resolve(fn);
-            };
-
-            list.appendChild(row);
-          }
-
-          return;
         }
 
-        list.innerHTML = "";
-
-        const tree = buildTree(files || []);
-        sortTree(tree);
-
-        const visible = [];
-        flattenTreeVisible(tree, visible, 0);
-
-        if (!visible.length) {
-          renderEmpty("No .csv files found in input/csv");
-          return;
-        }
-
-        for (const entry of visible) {
-          if (entry.kind === "dir") {
-            const isOpen = expanded.has(entry.path);
-            const label = entry.name;
-            const row = renderRowBase({
-              isFolder: true,
-              label: `${isOpen ? "▼" : "▶"} ${label}`,
-              depth: entry.depth,
-              isActive: false,
-            });
-
-            row.onclick = (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-
-              if (expanded.has(entry.path)) expanded.delete(entry.path);
-              else expanded.add(entry.path);
-
-              render(search.value, inContentsBtn._active);
-            };
-
-            list.appendChild(row);
-            continue;
-          }
-
-          const isActive = (String(entry.path) === String(current));
-          const row = renderRowBase({
-            isFolder: false,
-            label: entry.name,
-            subLabel: entry.path.includes("/") ? entry.path : "",
-            depth: entry.depth,
-            isActive,
-          });
-
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(entry.path);
-          };
-
-          list.appendChild(row);
-        }
-
-        return;
-      }
-
-      if (!qRaw) {
-        list.innerHTML = "";
-        for (const fn of (files || [])) {
-          const isActive = (String(fn) === String(current));
-          const row = renderRowBase({
-            isFolder: false,
-            label: fn,
-            depth: 0,
-            isActive,
-          });
-
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(fn);
-          };
-
-          list.appendChild(row);
-        }
-        return;
-      }
-
-      renderEmpty("Searching contents...");
-
-      const results = [];
-      for (const fn of (files || [])) {
         if (mySeq !== renderSeq) return;
 
-        let hits = [];
-        try {
-          hits = await _vslinxFindHitsInFile(fn, qRaw);
-        } catch (_) {
-          hits = [];
+        listContainer.innerHTML = ""; 
+
+        if (!results.length) {
+          const empty = document.createElement("div");
+          empty.textContent = "No matching keys found.";
+          empty.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+          listContainer.appendChild(empty);
+          return;
         }
 
-        if (hits.length) results.push({ fn, hits });
-      }
-
-      if (mySeq !== renderSeq) return;
-
-      list.innerHTML = "";
-      if (!results.length) {
-        renderEmpty("No matching files.");
+        for (const r of results) {
+          const sub = r.hits.slice(0, 3).join(", ") + (r.hits.length > 3 ? "..." : "");
+          const row = createRow(r.fn, r.fn, false, 0, true, sub);
+          listContainer.appendChild(row);
+        }
         return;
       }
 
-      for (const r of results) {
-        const isActive = (String(r.fn) === String(current));
-        const row = renderRowBase({
-          isFolder: false,
-          label: r.fn,
-          subLabel: Array.isArray(r.hits) && r.hits.length ? `(${r.hits.join(", ")})` : "",
-          depth: 0,
-          isActive,
-        });
-
-        row.onclick = () => {
-          document.body.removeChild(overlay);
-          resolve(r.fn);
-        };
-
-        list.appendChild(row);
+      if (!inContentsMode && qRaw) {
+        const filtered = allFiles.filter(f => f.toLowerCase().includes(q));
+        if (filtered.length === 0) {
+           const empty = document.createElement("div");
+           empty.textContent = "No matching filenames.";
+           empty.style.cssText = "padding:20px;text-align:center;color:#aaa;opacity:0.6;";
+           listContainer.appendChild(empty);
+        } else {
+           filtered.forEach(fn => {
+             listContainer.appendChild(createRow(fn, fn, false, 0, true));
+           });
+        }
+        return;
       }
+
+      const root = buildFileTree(allFiles);
+      renderTree(listContainer, root, 0);
     }
 
-    let debounceT = null;
-    function scheduleRender() {
-      if (debounceT) clearTimeout(debounceT);
-      const delay = inContentsBtn._active ? 180 : 0;
-      debounceT = setTimeout(() => {
-        render(search.value, inContentsBtn._active);
-      }, delay);
-    }
-
-    search.oninput = scheduleRender;
-
-    inContentsBtn.onclick = (e) => {
-      e.preventDefault?.();
-      e.stopPropagation?.();
-      inContentsBtn._active = !inContentsBtn._active;
-      setInContentsVisual();
-      scheduleRender();
+    let debounceTimer;
+    searchInput.oninput = () => {
+      clearTimeout(debounceTimer);
+      const delay = inContentsMode ? 400 : 200;
+      debounceTimer = setTimeout(renderList, delay);
     };
 
-    footer.appendChild(cancel);
+    cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
 
-    card.appendChild(title);
-    card.appendChild(searchRow);
-    card.appendChild(list);
-    card.appendChild(footer);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
+    applyBtn.onclick = () => {
+      document.body.removeChild(overlay);
+      resolve({ mode: 'multi', files: Array.from(multiSelected) });
+    };
 
-    render("", false);
-    setTimeout(() => search.focus(), 0);
+    footer.append(cancelBtn, applyBtn);
+    card.append(title, toolBar, listContainer, footer);
+    overlay.append(card);
+    document.body.append(overlay);
+
+    renderList();
+    setTimeout(() => searchInput.focus(), 0);
+  });
+}
+
+function showActiveRowsSearchModal(rows) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999999;display:flex;align-items:center;justify-content:center;";
+    const card = document.createElement("div");
+    card.style.cssText = "width:680px;max-width:94vw;max-height:84vh;background:#1f1f1f;border:1px solid #444;border-radius:12px;padding:14px;color:#eee;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;flex-direction:column;gap:10px;";
+
+    const title = document.createElement("div"); title.textContent = "Search in Added Files"; title.style.fontWeight = "600";
+    const search = document.createElement("input");
+    search.type = "text"; search.placeholder = "Type to search content...";
+    search.style.cssText = "padding:10px;border-radius:10px;border:1px solid #555;background:#2b2b2b;color:#eee;outline:none;";
+
+    const list = document.createElement("div");
+    list.style.cssText = "flex:1;overflow-y:auto;border:1px solid #333;border-radius:10px;background:#181818;min-height:200px;";
+
+    const footer = document.createElement("div"); 
+    footer.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;padding-top:4px;";
+
+    const leftActions = document.createElement("div");
+    leftActions.style.cssText = "display:flex;gap:8px;";
+
+    const btnStyle = "padding:8px 14px;border-radius:10px;border:1px solid #555;cursor:pointer;font-size:12px;";
+
+    const clearAllBtn = document.createElement("button");
+    clearAllBtn.textContent = "Clear All";
+    clearAllBtn.style.cssText = btnStyle + "background:#2b2b2b;color:#e05555;border-color:#552b2b;";
+    
+    const randomAllBtn = document.createElement("button");
+    randomAllBtn.textContent = "Global Random";
+    randomAllBtn.style.cssText = btnStyle + "background:#1f283a;color:#85a3e0;border-color:#2d3a50;";
+
+    leftActions.append(randomAllBtn, clearAllBtn);
+
+    const rightActions = document.createElement("div");
+    rightActions.style.cssText = "display:flex;gap:8px;";
+
+    const cancelBtn = document.createElement("button"); cancelBtn.textContent = "Cancel"; 
+    cancelBtn.style.cssText = btnStyle + "background:#2b2b2b;color:#eee;";
+    
+    const applyBtn = document.createElement("button"); applyBtn.textContent = "Apply Changes"; 
+    applyBtn.style.cssText = btnStyle + "border:1px solid #2d7a40;background:#1f3a25;color:#eee;font-weight:600;";
+
+    rightActions.append(cancelBtn, applyBtn);
+    footer.append(leftActions, rightActions);
+
+    const pendingSelections = new Map();
+    for (const r of rows) {
+      if (!r.value.file) continue;
+      const keys = new Set();
+      const existing = r._getKeysEffective ? r._getKeysEffective() : [];
+      existing.forEach(k => keys.add(k));
+      if (keys.size > 0) pendingSelections.set(r.value.file, keys);
+    }
+
+    function toggleSelection(file, key) {
+      if (!pendingSelections.has(file)) pendingSelections.set(file, new Set());
+      const set = pendingSelections.get(file);
+      if (set.has(key)) {
+        set.delete(key);
+      } else {
+        if (key === "Random") {
+           set.clear();
+        } else {
+           if (set.has("Random")) set.delete("Random");
+           if (set.has("(None)")) set.delete("(None)");
+        }
+        set.add(key);
+      }
+      renderResults(search.value);
+    }
+
+    clearAllBtn.onclick = () => {
+        const uniqueFiles = new Set(rows.map(r => r.value.file).filter(Boolean));        
+
+        pendingSelections.clear();        
+
+        for (const f of uniqueFiles) {
+            pendingSelections.set(f, new Set());
+        }
+        
+        renderResults(search.value);
+    };
+
+    randomAllBtn.onclick = () => {
+        const uniqueFiles = new Set(rows.map(r => r.value.file).filter(Boolean));
+        for (const f of uniqueFiles) {
+            pendingSelections.set(f, new Set(["Random"]));
+        }
+        renderResults(search.value);
+    };
+
+    
+    async function renderItems(itemsByFile) {
+        list.innerHTML = "";
+        if (itemsByFile.length === 0) {
+            list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items found.</div>';
+            return;
+        }
+
+        for (const group of itemsByFile) {
+            const header = document.createElement("div");
+            header.textContent = group.fn; 
+            header.style.cssText = "padding:8px 12px;background:#252525;border-bottom:1px solid #333;font-weight:600;font-size:13px;color:#ccc;";
+            list.appendChild(header);
+
+            const cachedData = await _vslinxGetFileDataCached(group.fn);
+            const map = cachedData.map || {};
+
+            for (const key of group.keys) {
+                const rowEl = document.createElement("div");
+                rowEl.style.cssText = "display:flex;align-items:center;padding:8px 12px 8px 24px;border-bottom:1px solid #222;cursor:pointer;";
+                
+                const isSelected = pendingSelections.has(group.fn) && pendingSelections.get(group.fn).has(key);
+                
+                const check = document.createElement("div");
+                check.textContent = isSelected ? "✓" : "";
+                check.style.cssText = `width:18px;height:18px;border:${isSelected ? "1px solid #4caf50" : "1px solid #555"};border-radius:4px;margin-right:10px;background:${isSelected ? "#4caf50" : "transparent"};display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;`;
+                
+                const contentDiv = document.createElement("div");
+                contentDiv.style.cssText = "overflow:hidden;flex:1;";
+                contentDiv.innerHTML = `<div style="color:#ddd;font-size:13px;">${key}</div><div style="color:#888;font-size:11px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${map[key] || ""}</div>`;
+                
+                rowEl.append(check, contentDiv);
+                
+                rowEl.onclick = (e) => { 
+                    e.preventDefault(); e.stopPropagation();
+                    toggleSelection(group.fn, key); 
+                };
+                rowEl.onmouseenter = () => rowEl.style.background = "#2a2a2a";
+                rowEl.onmouseleave = () => rowEl.style.background = "transparent";
+                list.appendChild(rowEl);
+            }
+        }
+    }
+
+    let searchSeq = 0;
+    async function renderResults(queryRaw) {
+      const seq = ++searchSeq;
+      const q = (queryRaw || "").trim().toLowerCase();
+      
+      if (!q) {
+        const selectedGroups = [];
+        for (const [fn, keys] of pendingSelections.entries()) {
+            if (keys.size > 0) {
+                selectedGroups.push({ fn, keys: Array.from(keys) });
+            }
+        }
+        selectedGroups.sort((a,b) => a.fn.localeCompare(b.fn)); 
+        
+        if (seq !== searchSeq) return;
+
+        if (selectedGroups.length === 0) {
+            list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">No items currently selected.<br>Type to search content...</div>';
+        } else {
+            const viewHeader = document.createElement("div");
+            viewHeader.textContent = "Currently Selected Items (Clear search to view):";
+            viewHeader.style.cssText = "padding:10px;color:#888;font-size:12px;font-style:italic;background:#1a1a1a;";
+            list.innerHTML = "";
+            list.appendChild(viewHeader);
+            await renderItems(selectedGroups);
+            list.prepend(viewHeader); 
+        }
+        return;
+      }
+      
+      list.innerHTML = '<div style="padding:20px;text-align:center;opacity:0.5;color:#aaa;">Searching...</div>';
+      const uniqueFiles = [...new Set(rows.map(r => r.value.file).filter(Boolean))];
+      const results = [];
+      for (const fn of uniqueFiles) {
+        if (seq !== searchSeq) return;
+        try {
+          const hits = await _vslinxFindHitsInFile(fn, q);
+          if (hits.length) results.push({ fn, keys: hits });
+        } catch (_) {}
+      }
+      if (seq !== searchSeq) return;
+      await renderItems(results);
+    }
+
+    let debounceT;
+    search.oninput = () => { clearTimeout(debounceT); debounceT = setTimeout(() => renderResults(search.value), 300); };
+    cancelBtn.onclick = () => { document.body.removeChild(overlay); resolve(null); };
+    applyBtn.onclick = () => { document.body.removeChild(overlay); resolve(pendingSelections); };
+
+    card.append(title, search, list, footer); overlay.append(card); document.body.append(overlay);
+    search.focus(); renderResults("");
   });
 }
 
@@ -1322,6 +1376,8 @@ const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
 const BUTTON_SPACER_ID = "vslinx_select_csv_spacer";
 const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
+const GLOBAL_SEARCH_BUTTON_ID = "vslinx_global_search_button";
+const GLOBAL_SEARCH_BUTTON_LABEL = "🔍 Search in Added Files";
 
 const EXTRA_PROMPT_ID = "vslinx_extra_prompt_row";
 const EXTRA_PROMPT_NAME = "csv_additional_prompt";
@@ -1393,6 +1449,7 @@ function layoutWidgets(node) {
   const rows = widgets.filter(isRowWidget);
   const topSpacer = widgets.find(isListTopSpacer) || null;
   const btnSpacer = widgets.find(isButtonSpacer) || null;
+  const searchBtn = widgets.find(isGlobalSearchButton); 
   const btn = widgets.find(isBottomButton) || null;
 
   const rest = widgets.filter((w) => {
@@ -1400,17 +1457,20 @@ function layoutWidgets(node) {
     if (w === topSpacer) return false;
     if (w === btnSpacer) return false;
     if (w === btn) return false;
+    if (w === searchBtn) return false; // Fix: Prevent duplication
     if (isListTopSpacer(w)) return false;
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
+    if (isGlobalSearchButton(w)) return false; // Fix: Prevent duplication
     return true;
   });
 
-  const next = [...rest];
-  if (topSpacer) next.push(topSpacer);
-  next.push(...rows);
-  if (btnSpacer) next.push(btnSpacer);
-  if (btn) next.push(btn);
+  const next = [...rest]; // ExtraPrompt (and others) go here
+  if (searchBtn) next.push(searchBtn); // Fix: Place Search button below ExtraPrompt
+  if (topSpacer) next.push(topSpacer); // Then the spacer
+  next.push(...rows); // Then the CSV rows
+  if (btnSpacer) next.push(btnSpacer); // Then bottom spacer
+  if (btn) next.push(btn); // Fix: Select CSV button stays at the very bottom
 
   node.widgets = next;
   updateRowOrders(node);
@@ -1423,12 +1483,26 @@ function removeAllVslinxUiWidgets(node) {
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
     if (isExtraPromptRow(w)) return false;
+	if (isGlobalSearchButton(w)) return false; 
     if (w?._vslinx_id === LIST_TOP_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_ID) return false;
     if (w?._vslinx_id === EXTRA_PROMPT_ID) return false;
     return true;
   });
+}
+
+function isGlobalSearchButton(w) { return w?._vslinx_id === GLOBAL_SEARCH_BUTTON_ID; }
+
+function ensureGlobalSearchButton(node) {
+  // 检查是否已经存在 (ID 复用)
+  const existing = (node.widgets || []).find(w => w?._vslinx_id === GLOBAL_SEARCH_BUTTON_ID);
+  if (existing) return existing;
+  
+  // 创建组合控件
+  const w = new SearchAndAddWidget();
+  node.addCustomWidget(w);
+  return w;
 }
 
 function ensureSelectButton(node) {
@@ -1439,44 +1513,64 @@ function ensureSelectButton(node) {
   ensureButtonSpacer(node, 10);
 
   const btn = node.addWidget("button", BUTTON_LABEL, null, async () => {
-    const files = await pickFilesFromDialog();
-    if (!files || !files.length) return true;
-
-    for (const file of files) {
-      try {
-        const { cancelled, overwriteWasChosen, up } = await uploadWithConflictResolution(file);
-        if (cancelled) continue;
-
-        const filename = up.filename;
-
-        if (up.deduped === true && hasRowForFilename(node, filename)) {
-          toast("info", "Already added", filename, 2500);
-          continue;
+    try {
+        const files = await listPromptFiles();
+        if (!files.length) {
+            toast("warn", "No files", "No .csv files found in input/csv", 3500);
+            return true;
         }
 
-        if (up.overwritten === true || overwriteWasChosen) {
-          removeRowsForFilename(node, filename);
+        const currentFiles = getRowWidgets(node)
+            .filter(w => w.value.type === "CsvRowWidget" && w.value.file)
+            .map(w => w.value.file);
+
+        // 主按钮：默认开启多选模式 (true)
+        const result = await showFilePickerModal(files, currentFiles, null, true);
+        if (!result) return true; 
+
+        // 无论如何，主按钮的操作都视为 Global Sync
+        const { files: pickedFiles } = result;
+        const desiredSet = new Set(pickedFiles);
+
+        // 1. 同步删除
+        const allRows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+        const rowsToRemove = [];
+        for (const r of allRows) {
+            if (r.value.file && !desiredSet.has(r.value.file)) {
+                rowsToRemove.push(r);
+            }
+        }
+        for (const r of rowsToRemove) {
+            const idx = node.widgets.indexOf(r);
+            if (idx !== -1) node.widgets.splice(idx, 1);
         }
 
-        node._csvRowCounter = (node._csvRowCounter || 0) + 1;
-        const row = new CsvRowWidget("csv_" + node._csvRowCounter);
-        node.addCustomWidget(row);
+        // 2. 同步添加
+        const remainingFiles = new Set(
+            getRowWidgets(node)
+            .filter(w => w.value.type === "CsvRowWidget" && w.value.file)
+            .map(w => w.value.file)
+        );
 
-        row.value.order = getRowWidgets(node).length;
-        await row.setFile(filename);
+        for (const f of pickedFiles) {
+            if (!remainingFiles.has(f)) {
+                node._csvRowCounter = (node._csvRowCounter || 0) + 1;
+                const row = new CsvRowWidget("csv_" + node._csvRowCounter);
+                node.addCustomWidget(row);
+                row.value.order = getRowWidgets(node).length;
+                await row.setFile(f);
+                remainingFiles.add(f);
+            }
+        }
 
         layoutWidgets(node);
         recomputeNodeSize(node);
         node.setDirtyCanvas(true, true);
-      } catch (e) {
-        console.error(e);
-        toast("error", "File Upload", String(e?.message || e), 4500);
-      }
-    }
 
-    layoutWidgets(node);
-    recomputeNodeSize(node);
-    node.setDirtyCanvas(true, true);
+    } catch (e) {
+        console.error(e);
+        toast("error", "List Files", String(e?.message || e), 4500);
+    }
     return true;
   });
 
@@ -1621,6 +1715,189 @@ function endDrag(node, commit = true) {
   node.setDirtyCanvas(true, true);
 }
 
+class SearchAndAddWidget {
+  constructor() {
+    this.name = "SearchAndAdd";
+    this.type = "custom";
+    this.value = { type: "SearchAndAddWidget" };
+    this.serialize = false; 
+    this._vslinx_id = GLOBAL_SEARCH_BUTTON_ID; 
+    this._hover = null;
+    // Updated bounds to include comma button
+    this._bounds = { search: [0, 0, 0, 0], comma: [0, 0, 0, 0], add: [0, 0, 0, 0] };
+  }
+
+  computeSize() { return [0, 32]; }
+
+  _hitPart(pos) {
+    const x = pos[0];
+    const y = pos[1];
+    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.add)) return "add";
+    if (inRect(this._bounds.comma)) return "comma"; // New hit detection
+    if (inRect(this._bounds.search)) return "search";
+    return null;
+  }
+
+  draw(ctx, node, width, y) {
+    const margin = 10; 
+    const h = 32; 
+    const w = Math.max(0, width - margin * 2);
+    const x = margin;
+    
+    // Layout: [ Search Button (Auto) ] [ Gap ] [ , Button ] [ Gap ] [ + Button ]
+    const btnSize = h; 
+    const gap = 8;
+    
+    // Calculate widths
+    // We need space for two buttons (comma + add) and two gaps
+    const rightButtonsW = (btnSize * 2) + gap;
+    const searchW = Math.max(0, w - rightButtonsW - gap);
+    
+    const commaX = x + searchW + gap;
+    const addX = commaX + btnSize + gap;
+    
+    // --- 1. Draw Search Button (Left) ---
+    ctx.save();
+    const isSearchHover = this._hover === "search";
+    ctx.fillStyle = isSearchHover ? "#3a3a3a" : "#2b2b2b"; 
+    roundRectPath(ctx, x, y, searchW, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    ctx.fillStyle = "#eee";
+    ctx.font = "13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(GLOBAL_SEARCH_BUTTON_LABEL, x + searchW / 2, y + h / 2);
+    ctx.restore();
+
+    // --- 2. Draw Comma (,) Button (Middle) ---
+    ctx.save();
+    const isCommaHover = this._hover === "comma";
+    // Black background as requested
+    ctx.fillStyle = isCommaHover ? "#3a3a3a" : "#2b2b2b"; 
+    roundRectPath(ctx, commaX, y, btnSize, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // Slight offset for visual centering of comma
+    ctx.fillText(",", commaX + btnSize / 2, y + h / 2 - 2); 
+    ctx.restore();
+
+    // --- 3. Draw Add (+) Button (Right) ---
+    ctx.save();
+    const isAddHover = this._hover === "add";
+    ctx.fillStyle = isAddHover ? "#358f4f" : "#2d7a40"; 
+    roundRectPath(ctx, addX, y, btnSize, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = isAddHover ? "#4caf50" : "#1f3a25";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("+", addX + btnSize / 2, y + h / 2 + 1);
+    ctx.restore();
+
+    this._bounds.search = [x, y, searchW, h];
+    this._bounds.comma = [commaX, y, btnSize, h];
+    this._bounds.add = [addX, y, btnSize, h];
+  }
+
+  mouse(event, pos, node) {
+    const t = event?.type || "";
+    const isDown = (t === "pointerdown" || t === "mousedown");
+    const isMove = (t === "pointermove" || t === "mousemove");
+    const isLeave = (t === "pointerleave" || t === "mouseleave");
+
+    if (isMove) {
+        const part = this._hitPart(pos);
+        if (this._hover !== part) {
+            this._hover = part;
+            node.setDirtyCanvas(true, false); 
+        }
+        return true;
+    }
+    
+    if (isLeave) {
+        if (this._hover) {
+            this._hover = null;
+            node.setDirtyCanvas(true, false);
+        }
+    }
+
+    if (isDown) {
+        const part = this._hitPart(pos);
+        
+        if (part === "search") {
+            // ... (Existing search logic remains unchanged) ...
+            (async () => {
+                const rows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+                if (!rows.length) { toast("warn", "No CSVs", "Add CSV files first."); return; }
+                const map = await showActiveRowsSearchModal(rows);
+                if (!map) return;
+                let changed = false;
+                for (const r of rows) {
+                  if (map.has(r.value.file)) {
+                    const keys = Array.from(map.get(r.value.file));
+                    if (keys.length === 0) {
+                       if(r.value.key !== "(None)") { r.value.key = "(None)"; r.value.keys = []; changed = true; }
+                    } else if (keys.length === 1) {
+                       if(r.value.key !== keys[0]) { r.value.key = keys[0]; r.value.keys = []; changed = true; }
+                    } else {
+                       r.value.key = keys[0]; r.value.keys = keys; changed = true;
+                    }
+                  }
+                }
+                if (changed) node.setDirtyCanvas(true, true);
+            })();
+            return true;
+        }
+        
+        // Combine Add logic for both (+) and (,)
+        if (part === "add" || part === "comma") {
+            let maxIdx = 0;
+            const allExtras = (node.widgets || []).filter(w => w?.value?.type === "ExtraPromptWidget");
+            allExtras.forEach(w => {
+                 if (w.name.startsWith(EXTRA_PROMPT_NAME)) {
+                     const suffix = w.name.replace(EXTRA_PROMPT_NAME, "").replace("_", "");
+                     const idx = parseInt(suffix);
+                     if (!isNaN(idx) && idx > maxIdx) maxIdx = idx;
+                 }
+            });
+            const nextIdx = maxIdx + 1;
+            const nextName = `${EXTRA_PROMPT_NAME}_${nextIdx}`;
+            
+            const w = new ExtraPromptWidget(nextName);
+            w._vslinx_id = `${EXTRA_PROMPT_ID}_${nextIdx}`;
+
+            // *** Logic for Comma Button ***
+            if (part === "comma") {
+                w.value.text = ",";
+            }
+            
+            node.addCustomWidget(w);
+            layoutWidgets(node);
+            recomputeNodeSize(node);
+            node.setDirtyCanvas(true, true);
+            return true;
+        }
+    }
+    return false;
+  }
+}
+
 class ExtraPromptWidget {
   constructor(name) {
     this.name = name;
@@ -1632,6 +1909,7 @@ class ExtraPromptWidget {
     this._bounds = {
       drag: [0, 0, 0, 0],
       edit: [0, 0, 0, 0],
+      sub: [0, 0, 0, 0],
     };
   }
 
@@ -1642,6 +1920,7 @@ class ExtraPromptWidget {
     const x = pos[0];
     const y = pos[1];
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.sub)) return "sub";
     if (inRect(this._bounds.drag)) return "drag";
     if (inRect(this._bounds.edit)) return "edit";
     return null;
@@ -1667,8 +1946,20 @@ class ExtraPromptWidget {
     const tableX = x + handleW + gap;
     const tableW = Math.max(0, w - handleW - gap);
 
+    // 按钮布局参数
+    const btnSize = 22; 
+    const btnY = yy + (hh - btnSize) / 2;
+    
+    // 删除按钮 (X) 位于最右侧
+    const btnSubX = tableX + tableW - btnSize - 6; 
+    
+    // 文本区域最大宽度（避开删除按钮）
+    const textAreaRightBoundary = btnSubX - 10; 
+    const maxTextW = Math.max(0, textAreaRightBoundary - tableX - 10); 
+
     ctx.save();
 
+    // 1. 绘制拖拽手柄
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
     roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
@@ -1683,6 +1974,7 @@ class ExtraPromptWidget {
     if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, hh, false);
     drawGripDots(ctx, handleX, handleY, handleW, hh, this._dragging);
 
+    // 2. 绘制主内容背景 (输入框背景)
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -1694,8 +1986,25 @@ class ExtraPromptWidget {
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
     ctx.stroke();
 
-    if (this._hover === "edit") drawHoverOverlay(ctx, tableX, yy, tableW, hh, false);
+    // 文本区域 Hover 效果
+    if (this._hover === "edit") {
+        // 稍微缩小一点 hover 区域，避免覆盖到 X 按钮的视觉范围
+        drawHoverOverlay(ctx, tableX, yy, textAreaRightBoundary - tableX + 5, hh, false);
+    }
 
+    // 3. 绘制 删除 (✕) 按钮
+    // 逻辑统一：只有 hover 时显示背景，图标一直显示
+    
+    // 如果悬停在删除按钮上，绘制红色半透明背景 (danger=true)
+    if (this._hover === "sub") {
+        drawHoverOverlay(ctx, btnSubX, btnY, btnSize, btnSize, true);
+    }
+    
+    // 使用 drawSmallX 绘制美观的叉号 (与 CSV Row 风格一致)
+    drawSmallX(ctx, btnSubX, btnY, btnSize, btnSize, "#e05555");
+
+
+    // 4. 绘制文本
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -1719,8 +2028,7 @@ class ExtraPromptWidget {
 
     ctx.save();
     ctx.globalAlpha = 0.95;
-    const maxW = Math.max(0, tableW - 20);
-    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, mid + 9);
+    ctx.fillText(ellipsizeToWidth(ctx, preview, maxTextW), tableX + 10, mid + 9);
     ctx.restore();
 
     ctx.font = prevFont;
@@ -1731,7 +2039,8 @@ class ExtraPromptWidget {
 
     if (!ghost) {
       this._bounds.drag = [handleX, handleY, handleW, hh];
-      this._bounds.edit = [tableX, yy, tableW, hh];
+      this._bounds.edit = [tableX, yy, textAreaRightBoundary - tableX, hh];
+      this._bounds.sub = [btnSubX, btnY, btnSize, btnSize];
     }
   }
 
@@ -1767,12 +2076,10 @@ class ExtraPromptWidget {
         const pointerY = pos?.[1];
         if (typeof pointerY === "number") {
           d.ghostY = pointerY - d.offsetY;
-
           const probeY = d.ghostY + ROW_HEIGHT * DRAG_SNAP_FRACTION;
           const lastProbeY = (typeof d.lastProbeY === "number") ? d.lastProbeY : probeY;
           const dirY = probeY - lastProbeY;
           d.lastProbeY = probeY;
-
           const targetIndex = computeTargetIndex(node, probeY, this, dirY);
           const rows = getRowsInOrder(node);
           const currentIndex = rows.indexOf(this);
@@ -1780,7 +2087,6 @@ class ExtraPromptWidget {
           if (clampedTarget !== currentIndex) {
             reorderDraggedRow(node, this, clampedTarget);
           }
-
           node.setDirtyCanvas(true, true);
         }
 
@@ -1793,7 +2099,6 @@ class ExtraPromptWidget {
         endDrag(node, true);
         return true;
       }
-
       return true;
     }
 
@@ -1802,17 +2107,26 @@ class ExtraPromptWidget {
 
     const part = this._hitPart(pos);
 
+    // --- 删除逻辑 ---
+    if (part === "sub") {
+        const idx = node.widgets.indexOf(this);
+        if (idx !== -1) {
+            node.widgets.splice(idx, 1);
+            layoutWidgets(node);
+            recomputeNodeSize(node);
+            node.setDirtyCanvas(true, true);
+        }
+        return true;
+    }
+
     if (part === "drag") {
       const rows = getRowsInOrder(node);
       const startIndex = rows.indexOf(this);
-
       this._dragging = true;
       this._hover = "drag";
-
       const pointerY = pos?.[1] ?? 0;
       const rowTop = typeof this._rowY === "number" ? this._rowY : pointerY;
       const offsetY = pointerY - rowTop;
-
       node._vslinxDrag = {
         row: this,
         offsetY,
@@ -1821,12 +2135,9 @@ class ExtraPromptWidget {
         startIndex,
         lastProbeY: rowTop + ROW_HEIGHT * DRAG_SNAP_FRACTION,
       };
-
       vslinxDragNode = node;
-
       setCanvasCursor("grabbing");
       node.setDirtyCanvas(true, true);
-
       return true;
     }
 
@@ -1926,7 +2237,7 @@ class CsvRowWidget {
     return outs.join(" | ");
   }
 
-  async _handlePickFile(node) {
+async _handlePickFile(node) {
     try {
       const files = await listPromptFiles();
       if (!files.length) {
@@ -1934,25 +2245,75 @@ class CsvRowWidget {
         return;
       }
 
-      const picked = await showFilePickerModal(files, this.value.file || "");
-      if (!picked) return;
+      const allNodeFiles = getRowWidgets(node)
+          .map(w => w.value.type === "CsvRowWidget" ? w.value.file : null)
+          .filter(Boolean);
 
-      if (hasRowForFilename(node, picked, this)) {
-        const idx = node.widgets.indexOf(this);
-        if (idx !== -1) node.widgets.splice(idx, 1);
+      const currentFile = this.value.file || null;
 
-        layoutWidgets(node);
-        recomputeNodeSize(node);
-        node.setDirtyCanvas(true, true);
+      // 接收对象返回值 { mode, files }
+      const result = await showFilePickerModal(files, allNodeFiles, currentFile, false);
+      if (!result) return; // Cancelled
 
-        toast("warn", "Duplicate entry", "That file is already in the list – removed this entry.", 3500);
-        return;
+      const { mode, files: pickedFiles } = result;
+
+      // === 场景 A: 单选模式 (Single Mode) ===
+      if (mode === "single") {
+          const targetFile = pickedFiles[0];
+          // 逻辑：只替换当前行。
+          // 哪怕文件已存在于其他行，也不删除其他行（允许重复）。
+          // 哪怕点的是自己，也重新设置一遍无妨（或者判等跳过）。
+          if (targetFile && targetFile !== this.value.file) {
+              await this.setFile(targetFile);
+          }
+      }
+      // === 场景 B: 多选模式 (Multi/Manager Mode) ===
+      else {
+          // 在多选模式下，用户意图是"管理整个列表"
+          // pickedFiles 是用户最终想要的"全部文件集合"
+          const desiredSet = new Set(pickedFiles);
+          
+          // 1. 删除逻辑：遍历现有行，如果其文件不在 desiredSet 中，则删除
+          const allRows = getRowWidgets(node).filter(w => w.value.type === "CsvRowWidget");
+          const rowsToRemove = [];
+          
+          for (const r of allRows) {
+              // 注意：如果是空行(无文件)，通常不删，或者看需求。这里假设只管理有文件的行。
+              if (r.value.file && !desiredSet.has(r.value.file)) {
+                  rowsToRemove.push(r);
+              }
+          }
+          
+          for (const r of rowsToRemove) {
+              const idx = node.widgets.indexOf(r);
+              if (idx !== -1) node.widgets.splice(idx, 1);
+          }
+
+          // 2. 添加逻辑：遍历 desiredSet，如果节点中还没有该文件，则添加
+          // 注意：如果节点里已经有A文件，就不再加A了（保持去重，或者说保持现有行状态）
+          const remainingFiles = new Set(
+              getRowWidgets(node)
+              .filter(w => w.value.type === "CsvRowWidget" && w.value.file)
+              .map(w => w.value.file)
+          );
+
+          for (const f of pickedFiles) {
+              if (!remainingFiles.has(f)) {
+                  node._csvRowCounter = (node._csvRowCounter || 0) + 1;
+                  const newRow = new CsvRowWidget("csv_" + node._csvRowCounter);
+                  node.addCustomWidget(newRow);
+                  newRow.value.order = getRowWidgets(node).length; 
+                  await newRow.setFile(f);
+                  // 标记已处理
+                  remainingFiles.add(f); 
+              }
+          }
       }
 
-      await this.setFile(picked);
       layoutWidgets(node);
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
+      
     } catch (e) {
       console.error(e);
       toast("error", "File Picker", String(e?.message || e), 4500);
@@ -2412,18 +2773,28 @@ app.registerExtension({
 
       ensureListTopSpacer(node, 10);
       ensureButtonSpacer(node, 10);
-      ensureSelectButton(node);
+      // 这里的 ensureGlobalSearchButton 现在会创建 Search+Add 组合控件
+      if (typeof ensureGlobalSearchButton === "function") ensureGlobalSearchButton(node);
+      if (typeof ensureSelectButton === "function") ensureSelectButton(node);
 
       const vals = info?.widgets_values || [];
 
-      const savedExtra = vals.find((v) => v && v.type === "ExtraPromptWidget");
-      const extra = ensureExtraPromptRow(node);
-      if (savedExtra && typeof savedExtra === "object") {
-        extra.value = { ...extra.value, ...savedExtra };
+      // --- 加载已保存的 Additional Prompt ---
+      const savedExtras = vals.filter((v) => v && v.type === "ExtraPromptWidget");
+      
+      // 注意：这里不再自动创建默认行，如果没有保存记录，列表就是空的
+      if (savedExtras.length > 0) {
+          savedExtras.forEach((sVal, index) => {
+              const name = index === 0 ? EXTRA_PROMPT_NAME : `${EXTRA_PROMPT_NAME}_${index + 1}`;
+              const w = new ExtraPromptWidget(name);
+              w._vslinx_id = index === 0 ? EXTRA_PROMPT_ID : `${EXTRA_PROMPT_ID}_${index + 1}`;
+              w.value = { ...w.value, ...sVal };
+              node.addCustomWidget(w);
+          });
       }
 
+      // --- 加载 CSV Rows ---
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
-
       node._csvRowCounter = 0;
       for (const v of savedRows) {
         node._csvRowCounter += 1;
@@ -2432,13 +2803,9 @@ app.registerExtension({
 
         const merged = { ...row.value, ...v };
         if (!Array.isArray(merged.keys)) merged.keys = [];
-
-        if (Array.isArray(merged.key)) {
-          merged.keys = merged.key.slice();
-        }
+        if (Array.isArray(merged.key)) merged.keys = merged.key.slice();
 
         row.value = merged;
-
         row.setFile(v.file).then(() => {
           row.value.key = v.key ?? "(None)";
           if (Array.isArray(v.key)) row.value.keys = v.key.slice();
@@ -2451,6 +2818,7 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
+      // 排序与布局
       const rows = getRowWidgets(node).slice();
       rows.sort((a, b) => {
         const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
@@ -2458,6 +2826,7 @@ app.registerExtension({
         if (ao !== bo) return ao - bo;
         return 0;
       });
+
       const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
       node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
@@ -2469,6 +2838,7 @@ app.registerExtension({
     removeAllVslinxUiWidgets(node);
     ensureListTopSpacer(node, 10);
     ensureButtonSpacer(node, 10);
+	ensureGlobalSearchButton(node);
     ensureSelectButton(node);
 
     ensureExtraPromptRow(node);
@@ -2478,4 +2848,4 @@ app.registerExtension({
     layoutWidgets(node);
     recomputeNodeSize(node);
   },
-});
+}); 
