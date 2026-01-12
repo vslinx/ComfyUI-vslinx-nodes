@@ -29,6 +29,15 @@ const NODE_NAME = "vsLinx_MultiLangPromptPicker";
 let vslinxHoverNode = null;
 let vslinxDragNode = null;
 
+function markGraphChanged(node) {
+  try {
+    node?.setDirtyCanvas?.(true, true);
+    node?.graph?.setDirtyCanvas?.(true, true);
+    node?.graph?.change?.();
+    app?.graph?.change?.();
+  } catch (_) { }
+}
+
 function isDragging() {
   return !!(vslinxDragNode?._vslinxDrag?.row && vslinxDragNode._vslinxDrag.row._dragging);
 }
@@ -133,7 +142,7 @@ function recomputeNodeSize(node) {
       node.size[0] = Math.max(node.size[0], computed[0]);
       node.size[1] = Math.max(80, computed[1]);
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
@@ -180,7 +189,7 @@ function ensureListTopSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -199,7 +208,7 @@ function ensureButtonSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -285,7 +294,7 @@ function ensureSelectButton(node) {
 
         layoutWidgets(node);
         recomputeNodeSize(node);
-        node.setDirtyCanvas(true, true);
+        markGraphChanged(node);
       } catch (e) {
         console.error(e);
         toast("error", "File Upload", String(e?.message || e), 4500);
@@ -294,7 +303,7 @@ function ensureSelectButton(node) {
 
     layoutWidgets(node);
     recomputeNodeSize(node);
-    node.setDirtyCanvas(true, true);
+    markGraphChanged(node);
     return true;
   });
 
@@ -325,7 +334,7 @@ function reorderDraggedRow(node, draggedRow, targetIndex) {
   node.widgets = [...nonRows, ...nextRows];
 
   layoutWidgets(node);
-  node.setDirtyCanvas(true, true);
+  markGraphChanged(node);
   return true;
 }
 
@@ -415,7 +424,7 @@ function restoreOriginalOrder(node, originalRows) {
   const nonRows = (node.widgets || []).filter((w) => !isRowWidget(w));
   node.widgets = [...nonRows, ...restored];
   layoutWidgets(node);
-  node.setDirtyCanvas(true, true);
+  markGraphChanged(node);
 }
 
 function endDrag(node, commit = true) {
@@ -436,7 +445,7 @@ function endDrag(node, commit = true) {
 
   setCanvasCursor("");
   updateRowOrders(node);
-  node.setDirtyCanvas(true, true);
+  markGraphChanged(node);
 }
 
 class ExtraPromptWidget {
@@ -653,7 +662,7 @@ class ExtraPromptWidget {
         if (txt === null) return;
         this.value.text = String(txt ?? "");
         layoutWidgets(node);
-        node.setDirtyCanvas(true, true);
+        markGraphChanged(node);
       });
       return true;
     }
@@ -695,10 +704,16 @@ class CsvRowWidget {
 
   computeSize() { return [0, ROW_HEIGHT]; }
 
-  async setFile(filename) {
+  async setFile(filename, opts = {}) {
+    const resetSelection = opts?.resetSelection !== false;
+
     this.value.file = filename;
-    this.value.key = "(None)";
-    this.value.keys = [];
+
+    if (resetSelection) {
+      this.value.key = "(None)";
+      this.value.keys = [];
+    }
+
     const data = await readPromptFile(filename);
     this._labels = ["(None)", "Random", ...(data.labels || [])];
     this._map = data.map || {};
@@ -761,7 +776,7 @@ class CsvRowWidget {
 
         layoutWidgets(node);
         recomputeNodeSize(node);
-        node.setDirtyCanvas(true, true);
+        markGraphChanged(node);
 
         toast("warn", "Duplicate entry", "That file is already in the list – removed this entry.", 3500);
         return;
@@ -770,7 +785,7 @@ class CsvRowWidget {
       await this.setFile(picked);
       layoutWidgets(node);
       recomputeNodeSize(node);
-      node.setDirtyCanvas(true, true);
+      markGraphChanged(node);
     } catch (e) {
       console.error(e);
       toast("error", "File Picker", String(e?.message || e), 4500);
@@ -782,7 +797,7 @@ class CsvRowWidget {
     if (idx !== -1) node.widgets.splice(idx, 1);
     layoutWidgets(node);
     recomputeNodeSize(node);
-    node.setDirtyCanvas(true, true);
+    markGraphChanged(node);
   }
 
   _hitPart(pos) {
@@ -1037,7 +1052,7 @@ class CsvRowWidget {
         callback: () => {
           this.value.key = label;
           this.value.keys = [];
-          node.setDirtyCanvas(true, true);
+          markGraphChanged(node);
         },
       }));
 
@@ -1059,14 +1074,14 @@ class CsvRowWidget {
             this.value.key = picked;
             this.value.keys = [];
           }
-          node.setDirtyCanvas(true, true);
+          markGraphChanged(node);
           return;
         }
 
         if (result.mode === "clear") {
           this.value.key = "(None)";
           this.value.keys = [];
-          node.setDirtyCanvas(true, true);
+          markGraphChanged(node);
           return;
         }
 
@@ -1083,7 +1098,7 @@ class CsvRowWidget {
             this.value.keys = cleaned.slice();
           }
 
-          node.setDirtyCanvas(true, true);
+          markGraphChanged(node);
           return;
         }
       });
@@ -1257,14 +1272,20 @@ app.registerExtension({
 
         row.value = merged;
 
-        row.setFile(v.file).then(() => {
+        row.setFile(v.file, { resetSelection: false }).then(() => {
           row.value.key = v.key ?? "(None)";
           if (Array.isArray(v.key)) row.value.keys = v.key.slice();
           if (Array.isArray(v.keys) && v.keys.length && !Array.isArray(row.value.key)) row.value.keys = v.keys.slice();
 
           layoutWidgets(node);
           node.setDirtyCanvas(true, true);
+        }).catch((e) => {
+          console.warn("[vsLinx] restore setFile failed for", v.file, e);
+
+          layoutWidgets(node);
+          node.setDirtyCanvas(true, true);
         });
+
       }
 
       node._vslinxDrag = null;
