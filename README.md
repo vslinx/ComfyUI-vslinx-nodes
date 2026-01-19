@@ -136,6 +136,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 ## Changelog
 ### v.1.7.0
 - added new ``Multi-Language CSV Prompt Picker`` to build prompts from one or more CSV “prompt lists”. For each row you pick an entry (or choose `Random`), and the node combines everything into one final prompt — plus two preview outputs so you can see what was chosen. This is useful if you write prompts in another language (Chinese, Japanese, Spanish, etc.) but want the final output to be English prompt text. You can keep a CSV where the **left column is your native-language key** and the **right column is the English prompt text**. 
+- added new setting that optimizes tablet view to make comfyui more usable when using a tablet to work with it
 
 ### v.1.6.1
 - added filename export for ``Load (Multiple) Images (List)`` and ``Load (Multiple) Images (Batch)`` with a node-property to also dedupe the filename to remove `` (number)`` from the name in case of a duplicate filename 

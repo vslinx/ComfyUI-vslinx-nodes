@@ -83,6 +83,41 @@ def sanitize_prompt_relpath(rel: str) -> str:
 
     return cleaned
 
+def sanitize_folder_relpath(rel: str) -> str:
+    rel = (rel or "").replace("\\", "/").strip()
+    rel = "".join(ch for ch in rel if ch.isprintable())
+
+    if not rel:
+        raise ValueError("Invalid folder name")
+
+    if rel.startswith("/") or rel.startswith("\\"):
+        raise ValueError("Invalid folder name")
+
+    head = rel.split("/")[0]
+    if ":" in head:
+        raise ValueError("Invalid folder name")
+
+    norm = os.path.normpath(rel).replace("\\", "/")
+    if norm in (".", ""):
+        raise ValueError("Invalid folder name")
+
+    parts = [p for p in norm.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        raise ValueError("Invalid folder name")
+
+    cleaned = "/".join(parts).strip().rstrip("/")
+    if not cleaned:
+        raise ValueError("Invalid folder name")
+
+    return cleaned
+
+def sanitize_folder_relpath_allow_empty(rel: str) -> str:
+    rel = (rel or "").replace("\\", "/").strip()
+    rel = "".join(ch for ch in rel if ch.isprintable())
+    if not rel:
+        return ""
+    return sanitize_folder_relpath(rel)
+
 def try_decode_bytes(data: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
         try:
@@ -157,25 +192,6 @@ def sha256_file(path: str) -> str:
 def invalidate_file_caches(filename: str):
     _CACHE.pop(filename, None)
 
-def find_existing_filename_by_hash(content_hash: str) -> Optional[str]:
-    folder = get_promptfiles_dir()
-    try:
-        for fn in os.listdir(folder):
-            low = fn.lower()
-            if not low.endswith(_ALLOWED_EXTS):
-                continue
-            full = os.path.join(folder, fn)
-            if not os.path.isfile(full):
-                continue
-            try:
-                if sha256_file(full) == content_hash:
-                    return fn
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
-
 def suggest_copy_name(original_filename: str) -> str:
     folder = get_promptfiles_dir()
     base, ext = os.path.splitext(original_filename)
@@ -193,6 +209,75 @@ def ensure_unique_name(preferred_filename: str) -> str:
         return preferred_filename
     return suggest_copy_name(preferred_filename)
 
+def find_existing_filename_by_hash_in_dir(content_hash: str, rel_dir: str) -> Optional[str]:
+    folder = get_promptfiles_dir()
+    rel_dir = (rel_dir or "").replace("\\", "/").strip().strip("/")
+
+    if not rel_dir:
+        try:
+            for fn in os.listdir(folder):
+                low = fn.lower()
+                if not low.endswith(_ALLOWED_EXTS):
+                    continue
+                full = os.path.join(folder, fn)
+                if not os.path.isfile(full):
+                    continue
+                try:
+                    if sha256_file(full) == content_hash:
+                        return fn
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    base = os.path.join(folder, rel_dir)
+    if not os.path.isdir(base):
+        return None
+
+    try:
+        for root, _, filenames in os.walk(base):
+            for fn in filenames:
+                low = fn.lower()
+                if not low.endswith(_ALLOWED_EXTS):
+                    continue
+                full = os.path.join(root, fn)
+                if not os.path.isfile(full):
+                    continue
+                try:
+                    if sha256_file(full) == content_hash:
+                        rel = os.path.relpath(full, folder).replace("\\", "/")
+                        if rel.startswith("./"):
+                            rel = rel[2:]
+                        return rel
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+@PromptServer.instance.routes.post("/vslinx/csv_prompt_mkdir")
+async def vslinx_csv_prompt_mkdir(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    raw = str((data or {}).get("path", "") or "").strip()
+    try:
+        rel = sanitize_folder_relpath(raw)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    folder = get_promptfiles_dir()
+    abs_path = os.path.join(folder, rel)
+
+    try:
+        os.makedirs(abs_path, exist_ok=True)
+        return web.json_response({"ok": True, "path": rel})
+    except Exception as e:
+        return web.json_response({"error": f"Create folder failed: {e}"}, status=500)
+
 @PromptServer.instance.routes.post("/vslinx/csv_prompt_upload")
 async def vslinx_csv_prompt_upload(request: web.Request):
     reader = await request.multipart()
@@ -201,12 +286,15 @@ async def vslinx_csv_prompt_upload(request: web.Request):
     rename_to = None
     original_filename = None
     data = None
+    target_dir = ""
 
     async for part in reader:
         if part.name == "mode":
             mode = (await part.text()).strip() or "auto"
         elif part.name == "rename_to":
             rename_to = (await part.text()).strip() or None
+        elif part.name in ("target_dir", "dir", "folder", "subdir"):
+            target_dir = (await part.text()).strip() or ""
         elif part.name == "file":
             try:
                 original_filename = sanitize_prompt_filename(part.filename or "uploaded.csv")
@@ -222,16 +310,23 @@ async def vslinx_csv_prompt_upload(request: web.Request):
         return web.json_response({"error": "Missing form field 'file'."}, status=400)
 
     folder = get_promptfiles_dir()
+
+    try:
+        rel_dir = sanitize_folder_relpath_allow_empty(target_dir)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
     content_hash = sha256_bytes(data)
 
-    existing_same = find_existing_filename_by_hash(content_hash)
+    existing_same = find_existing_filename_by_hash_in_dir(content_hash, rel_dir)
     if existing_same:
         return web.json_response({"filename": existing_same, "deduped": True})
 
-    target_name = original_filename
+    target_name = f"{rel_dir}/{original_filename}" if rel_dir else original_filename
     target_path = os.path.join(folder, target_name)
 
     def save_to(path: str):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(data)
 
@@ -267,7 +362,8 @@ async def vslinx_csv_prompt_upload(request: web.Request):
         final_name = target_name
         if rename_to:
             try:
-                final_name = sanitize_prompt_filename(rename_to)
+                safe_base = sanitize_prompt_filename(rename_to)
+                final_name = f"{rel_dir}/{safe_base}" if rel_dir else safe_base
             except Exception:
                 final_name = target_name
 
@@ -305,8 +401,16 @@ async def vslinx_csv_prompt_read(request: web.Request):
 async def vslinx_csv_prompt_list(request: web.Request):
     folder = get_promptfiles_dir()
     try:
-        files = []
-        for root, dirs, filenames in os.walk(folder):
+        files: List[str] = []
+        dirs: List[str] = []
+
+        for root, dirnames, filenames in os.walk(folder):
+            rel_dir = os.path.relpath(root, folder).replace("\\", "/")
+            if rel_dir.startswith("./"):
+                rel_dir = rel_dir[2:]
+            if rel_dir != "." and rel_dir != "":
+                dirs.append(rel_dir)
+
             for fn in filenames:
                 low = fn.lower()
                 if not low.endswith(_ALLOWED_EXTS):
@@ -320,8 +424,10 @@ async def vslinx_csv_prompt_list(request: web.Request):
                 if rel:
                     files.append(rel)
 
-        files.sort(key=lambda s: s.lower())
-        return web.json_response({"files": files})
+        files = sorted(set(files), key=lambda s: s.lower())
+        dirs = sorted(set(dirs), key=lambda s: s.lower())
+
+        return web.json_response({"files": files, "dirs": dirs})
     except Exception as e:
         return web.json_response({"error": f"Failed to list files: {e}"}, status=500)
 

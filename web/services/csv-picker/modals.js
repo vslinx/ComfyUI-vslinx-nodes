@@ -230,8 +230,28 @@ export function showConflictModal({ filename, suggested }) {
   });
 }
 
-export function showFilePickerModal(files, current = "") {
+export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
   return new Promise((resolve) => {
+    const mode = (opts?.mode === "multi") ? "multi" : "single";
+
+    const normalizeEntries = (input) => {
+      if (Array.isArray(input)) return { files: input.slice(), dirs: [] };
+      const files = Array.isArray(input?.files) ? input.files.slice() : [];
+      const dirs = Array.isArray(input?.dirs) ? input.dirs.slice() : [];
+      return { files, dirs };
+    };
+
+    let entries = normalizeEntries(entriesOrFiles);
+
+    const normPath = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+    const normFile = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+
+    const selectedFiles = new Set();
+    const selectedFolders = new Set();
+
+    const selectedFolderOrder = [];
+    let targetFolder = "";
+
     const overlay = document.createElement("div");
     overlay.style.position = "fixed";
     overlay.style.inset = "0";
@@ -242,7 +262,7 @@ export function showFilePickerModal(files, current = "") {
     overlay.style.justifyContent = "center";
 
     const card = document.createElement("div");
-    card.style.width = "620px";
+    card.style.width = "660px";
     card.style.maxWidth = "94vw";
     card.style.maxHeight = "84vh";
     card.style.background = "#1f1f1f";
@@ -323,8 +343,37 @@ export function showFilePickerModal(files, current = "") {
 
     const footer = document.createElement("div");
     footer.style.display = "flex";
-    footer.style.justifyContent = "flex-end";
+    footer.style.alignItems = "center";
+    footer.style.justifyContent = "space-between";
     footer.style.gap = "8px";
+
+    const leftFooter = document.createElement("div");
+    leftFooter.style.display = "flex";
+    leftFooter.style.alignItems = "center";
+    leftFooter.style.gap = "8px";
+
+    const rightFooter = document.createElement("div");
+    rightFooter.style.display = "flex";
+    rightFooter.style.alignItems = "center";
+    rightFooter.style.gap = "8px";
+
+    const addFilesBtn = document.createElement("button");
+    addFilesBtn.textContent = "Add CSV File(s)";
+    addFilesBtn.style.padding = "8px 10px";
+    addFilesBtn.style.borderRadius = "10px";
+    addFilesBtn.style.border = "1px solid #2b6cb0";
+    addFilesBtn.style.background = "#1e3a8a";
+    addFilesBtn.style.color = "#fff";
+    addFilesBtn.style.cursor = "pointer";
+
+    const createFolderBtn = document.createElement("button");
+    createFolderBtn.textContent = "Create Folder";
+    createFolderBtn.style.padding = "8px 10px";
+    createFolderBtn.style.borderRadius = "10px";
+    createFolderBtn.style.border = "1px solid #2b6cb0";
+    createFolderBtn.style.background = "#1e3a8a";
+    createFolderBtn.style.color = "#fff";
+    createFolderBtn.style.cursor = "pointer";
 
     const cancel = document.createElement("button");
     cancel.textContent = "Cancel";
@@ -335,28 +384,355 @@ export function showFilePickerModal(files, current = "") {
     cancel.style.color = "#eee";
     cancel.style.cursor = "pointer";
 
-    cancel.onclick = () => {
-      document.body.removeChild(overlay);
-      resolve(null);
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "Add";
+    addBtn.style.padding = "8px 14px";
+    addBtn.style.borderRadius = "10px";
+    addBtn.style.border = "1px solid #1f7a3a";
+    addBtn.style.background = "#14532d";
+    addBtn.style.color = "#fff";
+    addBtn.style.cursor = "pointer";
+
+    function setAddEnabled(enabled) {
+      const on = !!enabled;
+      addBtn.disabled = !on;
+      addBtn.style.opacity = on ? "1" : "0.45";
+      addBtn.style.cursor = on ? "pointer" : "default";
+      addBtn.style.filter = on ? "none" : "grayscale(0.7)";
+    }
+
+    setAddEnabled(false);
+
+    const close = (val) => {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(val);
     };
+
+    cancel.onclick = () => close(null);
 
     overlay.onclick = (e) => {
       if (e.target === overlay) cancel.onclick();
     };
 
-    let renderSeq = 0;
-
     const expanded = new Set();
     expanded.add("");
 
-    function buildTree(paths) {
-      const root = { name: "", path: "", dirs: new Map(), files: [] };
+    let busy = false;
+    function setBusy(v) {
+      busy = !!v;
 
-      for (const pRaw of (paths || [])) {
-        const p = String(pRaw ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
-        if (!p) continue;
+      cancel.disabled = busy;
+      cancel.style.opacity = busy ? "0.7" : "1";
+      cancel.style.cursor = busy ? "default" : "pointer";
+
+      if (mode === "multi") {
+        addFilesBtn.disabled = busy;
+        createFolderBtn.disabled = busy;
+        addFilesBtn.style.opacity = busy ? "0.7" : "1";
+        createFolderBtn.style.opacity = busy ? "0.7" : "1";
+        addFilesBtn.style.cursor = busy ? "default" : "pointer";
+        createFolderBtn.style.cursor = busy ? "default" : "pointer";
+
+        addBtn.disabled = busy || addBtn.disabled;
+        addBtn.style.opacity = (busy || addBtn.disabled) ? "0.7" : "1";
+        addBtn.style.cursor = (busy || addBtn.disabled) ? "default" : "pointer";
+      }
+    }
+
+    function updateAddButtonState() {
+      if (mode !== "multi") return;
+      const has = (selectedFiles.size + selectedFolders.size) > 0;
+      setAddEnabled(has);
+    }
+
+    function toggleFileSelected(path) {
+      const p = normFile(path);
+      if (!p) return;
+      if (selectedFiles.has(p)) selectedFiles.delete(p);
+      else selectedFiles.add(p);
+      updateAddButtonState();
+    }
+
+    function toggleFolderSelected(path) {
+      const p = normPath(path);
+      if (!p) return;
+
+      if (selectedFolders.has(p)) {
+        selectedFolders.delete(p);
+        const idx = selectedFolderOrder.indexOf(p);
+        if (idx !== -1) selectedFolderOrder.splice(idx, 1);
+        if (targetFolder === p) {
+          targetFolder = selectedFolderOrder.length ? selectedFolderOrder[selectedFolderOrder.length - 1] : "";
+        }
+      } else {
+        selectedFolders.add(p);
+        const idx = selectedFolderOrder.indexOf(p);
+        if (idx !== -1) selectedFolderOrder.splice(idx, 1);
+        selectedFolderOrder.push(p);
+        targetFolder = p;
+      }
+
+      updateAddButtonState();
+    }
+
+    function pickFilesFromDialog() {
+      return new Promise((resolvePick) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = ".csv,text/csv";
+        input.onchange = () => resolvePick(Array.from(input.files || []));
+        input.click();
+      });
+    }
+
+    async function refreshEntriesIfPossible() {
+      const getEntries = opts?.getEntries;
+      if (typeof getEntries !== "function") return;
+      try {
+        const next = await getEntries();
+        entries = normalizeEntries(next);
+      } catch (_) { }
+    }
+
+    addFilesBtn.onclick = async (e) => {
+      e.stopPropagation?.();
+      if (busy) return;
+
+      const onAddFiles = opts?.onAddFiles;
+      if (typeof onAddFiles !== "function") return;
+
+      const picked = await pickFilesFromDialog();
+      if (!picked || !picked.length) return;
+
+      setBusy(true);
+      try {
+        await onAddFiles(picked, targetFolder || "");
+        await refreshEntriesIfPossible();
+        render(search.value, inContentsBtn._active);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    createFolderBtn.onclick = async (e) => {
+      e.stopPropagation?.();
+      if (busy) return;
+
+      const onCreateFolder = opts?.onCreateFolder;
+      if (typeof onCreateFolder !== "function") return;
+
+      const name = window.prompt("Create folder (relative to input/csv):", targetFolder ? `${targetFolder}/` : "");
+      const raw = String(name ?? "").trim();
+      if (!raw) return;
+
+      const p = normPath(raw);
+      if (!p) return;
+
+      setBusy(true);
+      try {
+        await onCreateFolder(p);
+        await refreshEntriesIfPossible();
 
         const parts = p.split("/").filter(Boolean);
+        let acc = "";
+        for (let i = 0; i < parts.length; i++) {
+          acc = acc ? `${acc}/${parts[i]}` : parts[i];
+          expanded.add(acc);
+        }
+
+        render(search.value, inContentsBtn._active);
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    addBtn.onclick = (e) => {
+      e.stopPropagation?.();
+      if (busy) return;
+      if (mode !== "multi") return;
+
+      const out = {
+        mode: "multi",
+        files: Array.from(selectedFiles),
+        folders: Array.from(selectedFolders),
+      };
+      close(out);
+    };
+
+    function renderEmpty(text) {
+      list.innerHTML = "";
+      const empty = document.createElement("div");
+      empty.textContent = text;
+      empty.style.padding = "10px";
+      empty.style.opacity = "0.8";
+      list.appendChild(empty);
+    }
+
+    function makeCheckbox(checked) {
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!checked;
+      cb.style.width = "16px";
+      cb.style.height = "16px";
+      cb.style.margin = "0";
+      cb.style.cursor = "pointer";
+      cb.style.flex = "0 0 auto";
+      cb.onclick = (e) => e.stopPropagation();
+      cb.onmousedown = (e) => e.stopPropagation();
+      return cb;
+    }
+
+    function renderRowBase({
+      isFolder,
+      label,
+      subLabel = "",
+      depth = 0,
+      isActive = false,
+      isSelected = false,
+      isTarget = false,
+      canExpand = false,
+      onToggle,
+      onOpenOrPick,
+    }) {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "10px";
+      row.style.padding = "10px 12px";
+      row.style.borderBottom = "1px solid #222";
+      row.style.whiteSpace = "nowrap";
+      row.style.overflow = "hidden";
+      row.style.paddingLeft = `${12 + depth * 16}px`;
+
+      if (isActive) {
+        row.style.background = "#2a2a2a";
+        row.style.fontWeight = "600";
+      }
+
+      if (isSelected) {
+        row.style.background = "#223044";
+        row.style.boxShadow = "inset 0 0 0 1px rgba(90,160,255,0.25)";
+      }
+
+      if (isTarget) {
+        row.style.boxShadow = "inset 0 0 0 1px rgba(90,160,255,0.45)";
+      }
+
+      row.onmouseenter = () => {
+        if (isActive) row.style.background = "#2f2f2f";
+        else if (isSelected) row.style.background = "#273754";
+        else row.style.background = "#232323";
+      };
+      row.onmouseleave = () => {
+        if (isActive) row.style.background = "#2a2a2a";
+        else if (isSelected) row.style.background = "#223044";
+        else row.style.background = "transparent";
+      };
+
+      let cb = null;
+      if (mode === "multi") {
+        cb = makeCheckbox(isSelected);
+        cb.onchange = (e) => {
+          e.stopPropagation();
+          onToggle?.();
+        };
+        row.appendChild(cb);
+      } else {
+        const spacer = document.createElement("div");
+        spacer.style.width = "16px";
+        spacer.style.flex = "0 0 auto";
+        spacer.style.opacity = "0";
+        row.appendChild(spacer);
+      }
+
+      const clickZone = document.createElement("div");
+      clickZone.style.display = "flex";
+      clickZone.style.alignItems = "center";
+      clickZone.style.gap = "8px";
+      clickZone.style.flex = "1 1 auto";
+      clickZone.style.minWidth = "0";
+      clickZone.style.cursor = "pointer";
+      clickZone.onclick = (e) => {
+        e.stopPropagation?.();
+        onOpenOrPick?.();
+      };
+
+      const icon = document.createElement("span");
+      icon.textContent = isFolder ? "📁" : "📄";
+      icon.style.opacity = "0.9";
+      icon.style.flex = "0 0 auto";
+
+      const nameWrap = document.createElement("div");
+      nameWrap.style.display = "flex";
+      nameWrap.style.flexDirection = "column";
+      nameWrap.style.gap = "2px";
+      nameWrap.style.minWidth = "0";
+      nameWrap.style.flex = "1 1 auto";
+
+      const nameSpan = document.createElement("div");
+      nameSpan.textContent = label;
+      nameSpan.style.overflow = "hidden";
+      nameSpan.style.textOverflow = "ellipsis";
+
+      nameWrap.appendChild(nameSpan);
+
+      if (subLabel) {
+        const sub = document.createElement("div");
+        sub.textContent = subLabel;
+        sub.style.opacity = "0.6";
+        sub.style.fontSize = "12px";
+        sub.style.overflow = "hidden";
+        sub.style.textOverflow = "ellipsis";
+        sub.style.whiteSpace = "nowrap";
+        nameWrap.appendChild(sub);
+      }
+
+      clickZone.appendChild(icon);
+      clickZone.appendChild(nameWrap);
+      row.appendChild(clickZone);
+
+      if (isFolder) {
+        const hint = document.createElement("span");
+        hint.style.flex = "0 0 auto";
+        hint.style.opacity = "0.65";
+        hint.style.fontSize = "12px";
+        hint.textContent = canExpand ? "" : "(empty)";
+        row.appendChild(hint);
+      } else {
+        const spacer2 = document.createElement("span");
+        spacer2.style.flex = "0 0 auto";
+        spacer2.style.opacity = "0.65";
+        spacer2.style.fontSize = "12px";
+        spacer2.textContent = "";
+        row.appendChild(spacer2);
+      }
+
+      return row;
+    }
+
+    function buildTree(dirs, files) {
+      const root = { name: "", path: "", dirs: new Map(), files: [] };
+
+      for (const dRaw of (dirs || [])) {
+        const d = normPath(dRaw);
+        if (!d) continue;
+        const parts = d.split("/").filter(Boolean);
+        let node = root;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          const dirPath = parts.slice(0, i + 1).join("/");
+          if (!node.dirs.has(part)) {
+            node.dirs.set(part, { name: part, path: dirPath, dirs: new Map(), files: [] });
+          }
+          node = node.dirs.get(part);
+        }
+      }
+
+      for (const fRaw of (files || [])) {
+        const f = normFile(fRaw);
+        if (!f) continue;
+        const parts = f.split("/").filter(Boolean);
         if (!parts.length) continue;
 
         let node = root;
@@ -390,74 +766,13 @@ export function showFilePickerModal(files, current = "") {
       for (const d of dirsArr) sortTree(d);
     }
 
-    function renderRowBase({ isFolder, label, subLabel = "", depth = 0, isActive = false, danger = false }) {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "8px";
-      row.style.padding = "10px 12px";
-      row.style.cursor = "pointer";
-      row.style.borderBottom = "1px solid #222";
-      row.style.whiteSpace = "nowrap";
-      row.style.overflow = "hidden";
-
-      row.style.paddingLeft = `${12 + depth * 16}px`;
-
-      if (isActive) {
-        row.style.background = "#2a2a2a";
-        row.style.fontWeight = "600";
-      }
-
-      row.onmouseenter = () => (row.style.background = isActive ? "#2f2f2f" : (danger ? "#2a1e1e" : "#232323"));
-      row.onmouseleave = () => (row.style.background = isActive ? "#2a2a2a" : "transparent");
-
-      const icon = document.createElement("span");
-      icon.textContent = isFolder ? "📁" : "📄";
-      icon.style.opacity = "0.9";
-      icon.style.flex = "0 0 auto";
-
-      const nameSpan = document.createElement("span");
-      nameSpan.textContent = label;
-      nameSpan.style.flex = "0 1 auto";
-      nameSpan.style.overflow = "hidden";
-      nameSpan.style.textOverflow = "ellipsis";
-
-      row.appendChild(icon);
-      row.appendChild(nameSpan);
-
-      if (subLabel) {
-        const sub = document.createElement("span");
-        sub.textContent = subLabel;
-        sub.style.opacity = "0.55";
-        sub.style.fontSize = "12px";
-        sub.style.flex = "1 1 auto";
-        sub.style.overflow = "hidden";
-        sub.style.textOverflow = "ellipsis";
-        sub.style.minWidth = "0";
-        row.appendChild(sub);
-      } else {
-        const spacer = document.createElement("span");
-        spacer.style.flex = "1 1 auto";
-        row.appendChild(spacer);
-      }
-
-      return row;
-    }
-
-    function renderEmpty(text) {
-      list.innerHTML = "";
-      const empty = document.createElement("div");
-      empty.textContent = text;
-      empty.style.padding = "10px";
-      empty.style.opacity = "0.8";
-      list.appendChild(empty);
-    }
-
     function flattenTreeVisible(node, out, depth = 0) {
       const dirs = node._dirsSorted || Array.from(node.dirs.values());
       for (const d of dirs) {
-        out.push({ kind: "dir", depth, name: d.name, path: d.path, node: d });
-        if (expanded.has(d.path)) {
+        const canExpand = (d.dirs.size > 0) || ((d.files || []).length > 0);
+        out.push({ kind: "dir", depth, name: d.name, path: d.path, node: d, canExpand });
+
+        if (expanded.has(d.path) && canExpand) {
           flattenTreeVisible(d, out, depth + 1);
         }
       }
@@ -468,7 +783,7 @@ export function showFilePickerModal(files, current = "") {
     }
 
     function ensurePathExpandedForCurrent(cur) {
-      const p = String(cur ?? "").replace(/\\/g, "/");
+      const p = normFile(cur);
       if (!p || !p.includes("/")) return;
       const parts = p.split("/").filter(Boolean);
       let acc = "";
@@ -477,6 +792,8 @@ export function showFilePickerModal(files, current = "") {
         expanded.add(acc);
       }
     }
+
+    let renderSeq = 0;
 
     async function render(filterText, inContentsMode) {
       const mySeq = ++renderSeq;
@@ -489,7 +806,7 @@ export function showFilePickerModal(files, current = "") {
       if (!inContentsMode) {
         if (q) {
           list.innerHTML = "";
-          const shown = (files || []).filter((fn) => !q || String(fn).toLowerCase().includes(q));
+          const shown = (entries.files || []).filter((fn) => String(fn).toLowerCase().includes(q));
           if (!shown.length) {
             renderEmpty("No matching files.");
             return;
@@ -497,17 +814,36 @@ export function showFilePickerModal(files, current = "") {
 
           for (const fn of shown) {
             const isActive = (String(fn) === String(current));
+            const isSel = mode === "multi" ? selectedFiles.has(normFile(fn)) : false;
+
             const row = renderRowBase({
               isFolder: false,
               label: fn,
               depth: 0,
               isActive,
+              isSelected: isSel,
+              isTarget: false,
+              canExpand: false,
+              onToggle: mode === "multi" ? () => toggleFileSelected(fn) : null,
+              onOpenOrPick: () => {
+                if (mode === "single") {
+                  close(fn);
+                } else {
+                  close({ mode: "single", file: fn });
+                }
+              },
             });
 
-            row.onclick = () => {
-              document.body.removeChild(overlay);
-              resolve(fn);
-            };
+            if (mode === "multi") {
+              const cb = row.querySelector('input[type="checkbox"]');
+              if (cb) {
+                cb.onchange = (e) => {
+                  e.stopPropagation();
+                  toggleFileSelected(fn);
+                  render(search.value, inContentsBtn._active);
+                };
+              }
+            }
 
             list.appendChild(row);
           }
@@ -517,7 +853,7 @@ export function showFilePickerModal(files, current = "") {
 
         list.innerHTML = "";
 
-        const tree = buildTree(files || []);
+        const tree = buildTree(entries.dirs || [], entries.files || []);
         sortTree(tree);
 
         const visible = [];
@@ -531,41 +867,76 @@ export function showFilePickerModal(files, current = "") {
         for (const entry of visible) {
           if (entry.kind === "dir") {
             const isOpen = expanded.has(entry.path);
+            const canExpand = !!entry.canExpand;
+
+            if (!canExpand && mode !== "multi") continue;
+
             const label = entry.name;
+            const prefix = canExpand ? (isOpen ? "▼ " : "▶ ") : "";
+            const isSel = mode === "multi" ? selectedFolders.has(normPath(entry.path)) : false;
+            const isT = mode === "multi" ? (normPath(entry.path) === normPath(targetFolder)) : false;
+
             const row = renderRowBase({
               isFolder: true,
-              label: `${isOpen ? "▼" : "▶"} ${label}`,
+              label: `${prefix}${label}`,
               depth: entry.depth,
               isActive: false,
+              isSelected: isSel,
+              isTarget: isT,
+              canExpand,
+              onToggle: mode === "multi" ? () => toggleFolderSelected(entry.path) : null,
+              onOpenOrPick: () => {
+                if (!canExpand) return;
+                if (expanded.has(entry.path)) expanded.delete(entry.path);
+                else expanded.add(entry.path);
+                render(search.value, inContentsBtn._active);
+              },
             });
 
-            row.onclick = (e) => {
-              e.preventDefault?.();
-              e.stopPropagation?.();
-
-              if (expanded.has(entry.path)) expanded.delete(entry.path);
-              else expanded.add(entry.path);
-
-              render(search.value, inContentsBtn._active);
-            };
+            if (mode === "multi") {
+              const cb = row.querySelector('input[type="checkbox"]');
+              if (cb) {
+                cb.onchange = (e) => {
+                  e.stopPropagation();
+                  toggleFolderSelected(entry.path);
+                  render(search.value, inContentsBtn._active);
+                };
+              }
+            }
 
             list.appendChild(row);
             continue;
           }
 
           const isActive = (String(entry.path) === String(current));
+          const isSel = mode === "multi" ? selectedFiles.has(normFile(entry.path)) : false;
+
           const row = renderRowBase({
             isFolder: false,
             label: entry.name,
             subLabel: entry.path.includes("/") ? entry.path : "",
             depth: entry.depth,
             isActive,
+            isSelected: isSel,
+            isTarget: false,
+            canExpand: false,
+            onToggle: mode === "multi" ? () => toggleFileSelected(entry.path) : null,
+            onOpenOrPick: () => {
+              if (mode === "single") close(entry.path);
+              else close({ mode: "single", file: entry.path });
+            },
           });
 
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(entry.path);
-          };
+          if (mode === "multi") {
+            const cb = row.querySelector('input[type="checkbox"]');
+            if (cb) {
+              cb.onchange = (e) => {
+                e.stopPropagation();
+                toggleFileSelected(entry.path);
+                render(search.value, inContentsBtn._active);
+              };
+            }
+          }
 
           list.appendChild(row);
         }
@@ -575,19 +946,35 @@ export function showFilePickerModal(files, current = "") {
 
       if (!qRaw) {
         list.innerHTML = "";
-        for (const fn of (files || [])) {
+        for (const fn of (entries.files || [])) {
           const isActive = (String(fn) === String(current));
+          const isSel = mode === "multi" ? selectedFiles.has(normFile(fn)) : false;
+
           const row = renderRowBase({
             isFolder: false,
             label: fn,
             depth: 0,
             isActive,
+            isSelected: isSel,
+            isTarget: false,
+            canExpand: false,
+            onToggle: mode === "multi" ? () => toggleFileSelected(fn) : null,
+            onOpenOrPick: () => {
+              if (mode === "single") close(fn);
+              else close({ mode: "single", file: fn });
+            },
           });
 
-          row.onclick = () => {
-            document.body.removeChild(overlay);
-            resolve(fn);
-          };
+          if (mode === "multi") {
+            const cb = row.querySelector('input[type="checkbox"]');
+            if (cb) {
+              cb.onchange = (e) => {
+                e.stopPropagation();
+                toggleFileSelected(fn);
+                render(search.value, inContentsBtn._active);
+              };
+            }
+          }
 
           list.appendChild(row);
         }
@@ -597,7 +984,7 @@ export function showFilePickerModal(files, current = "") {
       renderEmpty("Searching contents...");
 
       const results = [];
-      for (const fn of (files || [])) {
+      for (const fn of (entries.files || [])) {
         if (mySeq !== renderSeq) return;
 
         let hits = [];
@@ -620,18 +1007,34 @@ export function showFilePickerModal(files, current = "") {
 
       for (const r of results) {
         const isActive = (String(r.fn) === String(current));
+        const isSel = mode === "multi" ? selectedFiles.has(normFile(r.fn)) : false;
+
         const row = renderRowBase({
           isFolder: false,
           label: r.fn,
           subLabel: Array.isArray(r.hits) && r.hits.length ? `(${r.hits.join(", ")})` : "",
           depth: 0,
           isActive,
+          isSelected: isSel,
+          isTarget: false,
+          canExpand: false,
+          onToggle: mode === "multi" ? () => toggleFileSelected(r.fn) : null,
+          onOpenOrPick: () => {
+            if (mode === "single") close(r.fn);
+            else close({ mode: "single", file: r.fn });
+          },
         });
 
-        row.onclick = () => {
-          document.body.removeChild(overlay);
-          resolve(r.fn);
-        };
+        if (mode === "multi") {
+          const cb = row.querySelector('input[type="checkbox"]');
+          if (cb) {
+            cb.onchange = (e) => {
+              e.stopPropagation();
+              toggleFileSelected(r.fn);
+              render(search.value, inContentsBtn._active);
+            };
+          }
+        }
 
         list.appendChild(row);
       }
@@ -649,14 +1052,30 @@ export function showFilePickerModal(files, current = "") {
     search.oninput = scheduleRender;
 
     inContentsBtn.onclick = (e) => {
-      e.preventDefault?.();
       e.stopPropagation?.();
       inContentsBtn._active = !inContentsBtn._active;
       setInContentsVisual();
       scheduleRender();
     };
 
-    footer.appendChild(cancel);
+    if (mode === "multi") {
+      leftFooter.appendChild(addFilesBtn);
+      leftFooter.appendChild(createFolderBtn);
+
+      rightFooter.appendChild(cancel);
+      rightFooter.appendChild(addBtn);
+
+      footer.appendChild(leftFooter);
+      footer.appendChild(rightFooter);
+    } else {
+      rightFooter.appendChild(cancel);
+      footer.appendChild(leftFooter);
+      footer.appendChild(rightFooter);
+
+      leftFooter.style.visibility = "hidden";
+      leftFooter.style.pointerEvents = "none";
+      leftFooter.style.width = "0";
+    }
 
     card.appendChild(title);
     card.appendChild(searchRow);

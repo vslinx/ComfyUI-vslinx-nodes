@@ -15,6 +15,9 @@ import {
   uploadPromptFile,
   readPromptFile,
   listPromptFiles,
+  listPromptEntries,
+  createPromptFolder,
+  _vslinxInvalidateCsvCache,
 } from "../services/csv-picker/csvApi.js";
 
 import {
@@ -63,23 +66,12 @@ function clearHoverOnNode(node) {
   if (changed) node.setDirtyCanvas(true, true);
 }
 
-function pickFilesFromDialog() {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.accept = ".csv,text/csv";
-    input.onchange = () => resolve(Array.from(input.files || []));
-    input.click();
-  });
-}
-
-async function uploadWithConflictResolution(file) {
+async function uploadWithConflictResolution(file, subdir = "") {
   let up;
   let overwriteWasChosen = false;
 
   try {
-    up = await uploadPromptFile(file, "auto");
+    up = await uploadPromptFile(file, "auto", null, subdir);
   } catch (e) {
     if (e?.status === 409 && e?.data?.error === "NAME_CONFLICT") {
       const choice = await showConflictModal({
@@ -91,9 +83,9 @@ async function uploadWithConflictResolution(file) {
 
       if (choice.action === "overwrite") {
         overwriteWasChosen = true;
-        up = await uploadPromptFile(file, "overwrite");
+        up = await uploadPromptFile(file, "overwrite", null, subdir);
       } else if (choice.action === "rename") {
-        up = await uploadPromptFile(file, "rename", choice.rename_to);
+        up = await uploadPromptFile(file, "rename", choice.rename_to, subdir);
       } else {
         return { cancelled: true };
       }
@@ -123,16 +115,6 @@ function hasRowForFilename(node, filename, excludeWidget = null) {
     if (w?.value?.type !== "CsvRowWidget") return false;
     return w?.value?.file === filename;
   });
-}
-
-function removeRowsForFilename(node, filename) {
-  const rows = (node.widgets || []).filter((w) => w?.value?.type === "CsvRowWidget");
-  for (const row of rows) {
-    if (row?.value?.file === filename) {
-      const idx = node.widgets.indexOf(row);
-      if (idx !== -1) node.widgets.splice(idx, 1);
-    }
-  }
 }
 
 function recomputeNodeSize(node) {
@@ -258,6 +240,72 @@ function removeAllVslinxUiWidgets(node) {
   });
 }
 
+async function uploadFilesIntoFolder(files, targetFolder = "") {
+  for (const file of (files || [])) {
+    try {
+      const { cancelled, up } = await uploadWithConflictResolution(file, targetFolder || "");
+      if (cancelled) continue;
+
+      const filename = up?.filename;
+      if (filename) _vslinxInvalidateCsvCache(filename);
+
+      toast("info", "Uploaded", String(filename || file?.name || "file"), 2200);
+    } catch (e) {
+      console.error(e);
+      toast("error", "File Upload", String(e?.message || e), 4500);
+    }
+  }
+}
+
+async function createFolder(path) {
+  try {
+    await createPromptFolder(path);
+    toast("info", "Folder created", path, 2200);
+  } catch (e) {
+    console.error(e);
+    toast("error", "Create Folder", String(e?.message || e), 4500);
+  }
+}
+
+function expandSelectionsToFiles(allFiles, selectedFiles, selectedFolders) {
+  const norm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const filesSet = new Set((selectedFiles || []).map(norm).filter(Boolean));
+  const folders = (selectedFolders || [])
+    .map((p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  for (const folder of folders) {
+    const prefix = folder ? (folder + "/") : "";
+    for (const f of (allFiles || [])) {
+      const ff = norm(f);
+      if (!ff) continue;
+      if (folder && ff.startsWith(prefix)) filesSet.add(ff);
+    }
+  }
+
+  return Array.from(filesSet);
+}
+
+async function addSingleFileToNode(node, filename) {
+  if (!filename) return;
+
+  if (hasRowForFilename(node, filename)) {
+    toast("info", "Already added", filename, 2200);
+    return;
+  }
+
+  node._csvRowCounter = (node._csvRowCounter || 0) + 1;
+  const row = new CsvRowWidget("csv_" + node._csvRowCounter);
+  node.addCustomWidget(row);
+
+  row.value.order = getRowWidgets(node).length;
+  await row.setFile(filename);
+
+  layoutWidgets(node);
+  recomputeNodeSize(node);
+  markGraphChanged(node);
+}
+
 function ensureSelectButton(node) {
   const existing = (node.widgets || []).find(isBottomButton);
   if (existing) return existing;
@@ -266,45 +314,47 @@ function ensureSelectButton(node) {
   ensureButtonSpacer(node, 10);
 
   const btn = node.addWidget("button", BUTTON_LABEL, null, async () => {
-    const files = await pickFilesFromDialog();
-    if (!files || !files.length) return true;
+    try {
+      const entries = await listPromptEntries().catch(async () => {
+        const files = await listPromptFiles();
+        return { files, dirs: [] };
+      });
 
-    for (const file of files) {
-      try {
-        const { cancelled, overwriteWasChosen, up } = await uploadWithConflictResolution(file);
-        if (cancelled) continue;
+      const picked = await showFilePickerModal(entries, "", {
+        mode: "multi",
+        onAddFiles: uploadFilesIntoFolder,
+        onCreateFolder: createFolder,
+        getEntries: listPromptEntries,
+      });
 
-        const filename = up.filename;
+      if (!picked) return true;
 
-        if (up.deduped === true && hasRowForFilename(node, filename)) {
-          toast("info", "Already added", filename, 2500);
-          continue;
-        }
-
-        if (up.overwritten === true || overwriteWasChosen) {
-          removeRowsForFilename(node, filename);
-        }
-
-        node._csvRowCounter = (node._csvRowCounter || 0) + 1;
-        const row = new CsvRowWidget("csv_" + node._csvRowCounter);
-        node.addCustomWidget(row);
-
-        row.value.order = getRowWidgets(node).length;
-        await row.setFile(filename);
-
-        layoutWidgets(node);
-        recomputeNodeSize(node);
-        markGraphChanged(node);
-      } catch (e) {
-        console.error(e);
-        toast("error", "File Upload", String(e?.message || e), 4500);
+      if (typeof picked === "string") {
+        await addSingleFileToNode(node, picked);
+        return true;
       }
-    }
 
-    layoutWidgets(node);
-    recomputeNodeSize(node);
-    markGraphChanged(node);
-    return true;
+      if (picked?.mode === "single" && picked?.file) {
+        await addSingleFileToNode(node, String(picked.file));
+        return true;
+      }
+
+      if (picked?.mode !== "multi") return true;
+
+      const allFiles = Array.isArray(entries?.files) ? entries.files : [];
+      const toAddFiles = expandSelectionsToFiles(allFiles, picked.files || [], picked.folders || []);
+      if (!toAddFiles.length) return true;
+
+      for (const filename of toAddFiles) {
+        await addSingleFileToNode(node, filename);
+      }
+
+      return true;
+    } catch (e) {
+      console.error(e);
+      toast("error", "CSV Picker", String(e?.message || e), 4500);
+      return true;
+    }
   });
 
   btn.serialize = false;
@@ -761,13 +811,15 @@ class CsvRowWidget {
 
   async _handlePickFile(node) {
     try {
-      const files = await listPromptFiles();
-      if (!files.length) {
-        toast("warn", "No files", "No .csv files found in input/csv", 3500);
-        return;
-      }
+      const entries = await listPromptEntries().catch(async () => {
+        const files = await listPromptFiles();
+        return { files, dirs: [] };
+      });
 
-      const picked = await showFilePickerModal(files, this.value.file || "");
+      const picked = await showFilePickerModal(entries, this.value.file || "", {
+        mode: "single",
+      });
+
       if (!picked) return;
 
       if (hasRowForFilename(node, picked, this)) {
@@ -1285,7 +1337,6 @@ app.registerExtension({
           layoutWidgets(node);
           node.setDirtyCanvas(true, true);
         });
-
       }
 
       node._vslinxDrag = null;

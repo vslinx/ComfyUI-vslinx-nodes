@@ -1,10 +1,12 @@
 import { api } from "/scripts/api.js";
 
-export async function uploadPromptFile(file, mode = "auto", rename_to = null) {
+export async function uploadPromptFile(file, mode = "auto", rename_to = null, subdir = "") {
   const form = new FormData();
   form.append("file", file);
   form.append("mode", mode);
   if (rename_to) form.append("rename_to", rename_to);
+  form.append("subdir", String(subdir || ""));
+
   const res = await api.fetchApi("/vslinx/csv_prompt_upload", { method: "POST", body: form });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -29,7 +31,64 @@ export async function listPromptFiles() {
   return Array.isArray(json?.files) ? json.files : [];
 }
 
+export async function listPromptEntries() {
+  const res = await api.fetchApi("/vslinx/csv_prompt_list");
+  if (!res.ok) throw new Error(`List failed (${res.status})`);
+  const json = await res.json().catch(() => ({}));
+
+  const files = Array.isArray(json?.files) ? json.files.slice() : [];
+  let dirs = Array.isArray(json?.dirs) ? json.dirs.slice() : null;
+
+  if (!dirs) {
+    const set = new Set();
+    for (const fRaw of files) {
+      const f = String(fRaw ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (!f.includes("/")) continue;
+      const parts = f.split("/").filter(Boolean);
+      let acc = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        acc = acc ? `${acc}/${parts[i]}` : parts[i];
+        set.add(acc);
+      }
+    }
+    dirs = Array.from(set);
+  }
+
+  const normFiles = files
+    .map((s) => String(s ?? "").replace(/\\/g, "/").replace(/^\/+/, ""))
+    .filter(Boolean);
+
+  const normDirs = dirs
+    .map((s) => String(s ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  return { files: normFiles, dirs: normDirs };
+}
+
+export async function createPromptFolder(path) {
+  const p = String(path ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!p) throw new Error("Folder path is empty.");
+
+  const res = await api.fetchApi("/vslinx/csv_prompt_mkdir", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: p }),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || `Create folder failed (${res.status})`);
+  return json;
+}
+
 const _vslinxCsvContentCache = new Map();
+
+export function _vslinxInvalidateCsvCache(filename = null) {
+  if (!filename) {
+    _vslinxCsvContentCache.clear();
+    return;
+  }
+  _vslinxCsvContentCache.delete(String(filename));
+}
 
 function _vslinxNorm(s) {
   return String(s ?? "").toLowerCase();
@@ -86,7 +145,7 @@ export async function _vslinxFindHitsInFile(filename, needleRaw) {
         }
       }
     }
-  } catch (_) { }
+  } catch (_) {}
 
   return hits;
 }
