@@ -6,6 +6,7 @@ import {
   drawClippedText,
   roundRectPath,
   drawSmallX,
+  drawCommaIcon,
   drawHoverOverlay,
   drawGripDots,
   setCanvasCursor,
@@ -32,6 +33,45 @@ const NODE_NAME = "vsLinx_MultiLangPromptPicker";
 let vslinxHoverNode = null;
 let vslinxDragNode = null;
 
+const VSLINX_COMMA_TOOLTIP_TEXT = "Join row with comma at the end if not already present";
+let _vslinxTooltipEl = null;
+
+function ensureTooltipEl() {
+  if (_vslinxTooltipEl) return _vslinxTooltipEl;
+
+  const el = document.createElement("div");
+  el.style.position = "fixed";
+  el.style.zIndex = "999999";
+  el.style.pointerEvents = "none";
+  el.style.padding = "6px 8px";
+  el.style.borderRadius = "8px";
+  el.style.background = "rgba(15,15,15,0.92)";
+  el.style.border = "1px solid rgba(255,255,255,0.14)";
+  el.style.color = "#eee";
+  el.style.fontFamily = "sans-serif";
+  el.style.fontSize = "12px";
+  el.style.lineHeight = "1.2";
+  el.style.boxShadow = "0 10px 25px rgba(0,0,0,0.35)";
+  el.style.display = "none";
+
+  document.body.appendChild(el);
+  _vslinxTooltipEl = el;
+  return el;
+}
+
+function showTooltip(text, clientX, clientY) {
+  const el = ensureTooltipEl();
+  el.textContent = String(text ?? "");
+  el.style.left = `${Math.round((clientX ?? 0) + 12)}px`;
+  el.style.top = `${Math.round((clientY ?? 0) + 12)}px`;
+  el.style.display = "block";
+}
+
+function hideTooltip() {
+  if (!_vslinxTooltipEl) return;
+  _vslinxTooltipEl.style.display = "none";
+}
+
 function markGraphChanged(node) {
   try {
     node?.setDirtyCanvas?.(true, true);
@@ -49,7 +89,6 @@ function clearHoverOnNode(node) {
   if (!node) return;
   let changed = false;
 
-  // clear row hovers
   for (const w of (node.widgets || [])) {
     const t = w?.value?.type;
     if ((t === "CsvRowWidget" || t === "ExtraPromptWidget") && w._hover) {
@@ -62,7 +101,6 @@ function clearHoverOnNode(node) {
     }
   }
 
-  // clear header hover
   const header = (node.widgets || []).find(isHeaderActionsWidget) || null;
   if (header && header._hover) {
     header._hover = null;
@@ -74,6 +112,8 @@ function clearHoverOnNode(node) {
     changed = true;
   }
   if (changed) node.setDirtyCanvas(true, true);
+
+  hideTooltip();
 }
 
 async function uploadWithConflictResolution(file, subdir = "") {
@@ -206,7 +246,6 @@ function ensureButtonSpacer(node, height = 10) {
   return spacer;
 }
 
-/** Simple Yes/No modal (kept inside this file so you don't need to change modals.js) */
 function showConfirmClearModal() {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -296,7 +335,6 @@ function showConfirmClearModal() {
 }
 
 function clearAllEntries(node) {
-  // remove all CsvRowWidget + ExtraPromptWidget
   node.widgets = (node.widgets || []).filter((w) => !isRowWidget(w));
   node._csvRowCounter = 0;
   node._extraPromptCounter = 0;
@@ -315,7 +353,7 @@ class HeaderActionsWidget {
     this.value = { type: "VslinxHeaderActions", order: -999999 };
     this._vslinx_id = HEADER_ACTIONS_ID;
 
-    this._hover = null; // "clear" | "add" | null
+    this._hover = null;
     this._rowY = null;
 
     this._bounds = {
@@ -325,7 +363,7 @@ class HeaderActionsWidget {
   }
 
   computeSize() { return [0, HEADER_HEIGHT]; }
-  serializeValue() { return undefined; } // not serialized
+  serializeValue() { return undefined; }
 
   _hitPart(pos) {
     const x = pos[0];
@@ -773,7 +811,7 @@ class ExtraPromptWidget {
   constructor(name) {
     this.name = name;
     this.type = "custom";
-    this.value = { type: "ExtraPromptWidget", text: "", order: 0 };
+    this.value = { type: "ExtraPromptWidget", text: "", order: 0, join_comma: true };
     this._hover = null;
     this._rowY = null;
     this._dragging = false;
@@ -782,6 +820,7 @@ class ExtraPromptWidget {
       drag: [0, 0, 0, 0],
       edit: [0, 0, 0, 0],
       remove: [0, 0, 0, 0],
+      comma: [0, 0, 0, 0],
     };
   }
 
@@ -794,6 +833,7 @@ class ExtraPromptWidget {
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
     if (inRect(this._bounds.drag)) return "drag";
     if (inRect(this._bounds.remove)) return "remove";
+    if (inRect(this._bounds.comma)) return "comma";
     if (inRect(this._bounds.edit)) return "edit";
     return null;
   }
@@ -802,7 +842,6 @@ class ExtraPromptWidget {
     const idx = node.widgets.indexOf(this);
     if (idx !== -1) node.widgets.splice(idx, 1);
 
-    // allow deleting the last additional prompt row (no auto re-add)
     layoutWidgets(node);
     recomputeNodeSize(node);
     markGraphChanged(node);
@@ -829,7 +868,6 @@ class ExtraPromptWidget {
     const tableX = x + handleW + gap;
     const tableW = Math.max(0, w - handleW - gap);
 
-    // match CsvRowWidget geometry
     const topH = Math.floor(hh * 0.52);
     const botH = hh - topH;
 
@@ -844,7 +882,6 @@ class ExtraPromptWidget {
 
     ctx.save();
 
-    // drag handle
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
     roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
@@ -861,7 +898,6 @@ class ExtraPromptWidget {
     }
     drawGripDots(ctx, handleX, handleY, handleW, handleH, this._dragging);
 
-    // table
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -873,25 +909,28 @@ class ExtraPromptWidget {
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
     ctx.stroke();
 
-    // separators
     ctx.globalAlpha = 0.55;
     ctx.strokeStyle = "#3a3a3a";
     ctx.beginPath();
     ctx.moveTo(tableX + 6, botY);
     ctx.lineTo(tableX + tableW - 6, botY);
+
     ctx.moveTo(remX, topY + 3);
     ctx.lineTo(remX, topY + topH - 3);
+
+    ctx.moveTo(remX, botY + 3);
+    ctx.lineTo(remX, botY + botH - 3);
+
     ctx.stroke();
 
-    // hover overlays
     if (this._hover === "remove") {
       drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
+    } else if (this._hover === "comma") {
+      drawHoverOverlay(ctx, remX, botY, removeW, botH, false);
     } else if (this._hover === "edit") {
       drawHoverOverlay(ctx, mainX, yy, mainW, hh, false);
     }
 
-    // REMOVE BUTTON (match CsvRowWidget)
-    // IMPORTANT: ensure alpha is exactly the same as CsvRowWidget for the button bg
     ctx.save();
     ctx.globalAlpha = 0.95;
     ctx.fillStyle = "#2a1e1e";
@@ -899,12 +938,21 @@ class ExtraPromptWidget {
     ctx.fill();
     ctx.restore();
 
-    // IMPORTANT: force alpha back to 1.0 before drawing the X
-    // (CsvRowWidget has globalAlpha=1.0 here, which is why its X is brighter)
     ctx.globalAlpha = 1.0;
     drawSmallX(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, "#e05555");
 
-    // text
+    const joinActive = this.value.join_comma !== false;
+
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = joinActive ? "#1e2a1e" : "#2b2b2b";
+    roundRectPath(ctx, remX + 4, botY + 4, removeW - 8, botH - 8, 7);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.globalAlpha = 1.0;
+    drawCommaIcon(ctx, remX + 4, botY + 4, removeW - 8, botH - 8, joinActive ? "#4ade80" : "#9ca3af");
+
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -928,8 +976,8 @@ class ExtraPromptWidget {
     const botMid = botY + botH / 2;
     ctx.save();
     ctx.globalAlpha = 0.95;
-    const maxW = Math.max(0, tableW - 20);
-    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, botMid);
+    const maxW = Math.max(0, mainW - 20);
+    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), mainX + 10, botMid);
     ctx.restore();
 
     ctx.font = prevFont;
@@ -941,7 +989,8 @@ class ExtraPromptWidget {
     if (!ghost) {
       this._bounds.drag = [handleX, handleY, handleW, handleH];
       this._bounds.remove = [remX, topY, removeW, topH];
-      this._bounds.edit = [tableX, yy, tableW, hh];
+      this._bounds.comma = [remX, botY, removeW, botH];
+      this._bounds.edit = [mainX, yy, mainW, hh];
     }
   }
 
@@ -1045,6 +1094,12 @@ class ExtraPromptWidget {
       return true;
     }
 
+    if (part === "comma") {
+      this.value.join_comma = !(this.value.join_comma !== false);
+      markGraphChanged(node);
+      return true;
+    }
+
     if (part === "edit") {
       showAdditionalPromptModal(this.value.text || "").then((txt) => {
         if (txt === null) return;
@@ -1063,7 +1118,7 @@ class CsvRowWidget {
   constructor(name) {
     this.name = name;
     this.type = "custom";
-    this.value = { type: "CsvRowWidget", file: "", key: "(None)", keys: [], order: 0 };
+    this.value = { type: "CsvRowWidget", file: "", key: "(None)", keys: [], order: 0, join_comma: true };
     this._labels = [];
     this._map = {};
     this._hover = null;
@@ -1073,6 +1128,7 @@ class CsvRowWidget {
       drag: [0, 0, 0, 0],
       file: [0, 0, 0, 0],
       remove: [0, 0, 0, 0],
+      comma: [0, 0, 0, 0],
       sel: [0, 0, 0, 0],
       out: [0, 0, 0, 0],
     };
@@ -1185,6 +1241,7 @@ class CsvRowWidget {
 
     if (inRect(this._bounds.drag)) return "drag";
     if (inRect(this._bounds.remove)) return "remove";
+    if (inRect(this._bounds.comma)) return "comma";
     if (inRect(this._bounds.file)) return "file";
     if (inRect(this._bounds.sel)) return "sel";
     return null;
@@ -1223,8 +1280,9 @@ class CsvRowWidget {
     const fileX = tableX;
     const remX = tableX + fileW;
 
-    const selW = Math.floor(tableW / 2);
-    const outW = tableW - selW;
+    const botMainW = Math.max(0, tableW - removeW);
+    const selW = Math.floor(botMainW / 2);
+    const outW = botMainW - selW;
     const selX = tableX;
     const outX = tableX + selW;
 
@@ -1260,14 +1318,20 @@ class CsvRowWidget {
     ctx.beginPath();
     ctx.moveTo(tableX + 6, botY);
     ctx.lineTo(tableX + tableW - 6, botY);
+
     ctx.moveTo(remX, topY + 3);
     ctx.lineTo(remX, topY + topH - 3);
+
+    ctx.moveTo(remX, botY + 3);
+    ctx.lineTo(remX, botY + botH - 3);
+
     ctx.moveTo(outX, botY + 3);
     ctx.lineTo(outX, botY + botH - 3);
     ctx.stroke();
 
     if (this._hover === "file") drawHoverOverlay(ctx, fileX, topY, fileW, topH, false);
     else if (this._hover === "remove") drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
+    else if (this._hover === "comma") drawHoverOverlay(ctx, remX, botY, removeW, botH, false);
     else if (this._hover === "sel") drawHoverOverlay(ctx, selX, botY, selW, botH, false);
 
     ctx.globalAlpha = 1.0;
@@ -1290,7 +1354,21 @@ class CsvRowWidget {
     roundRectPath(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, 7);
     ctx.fill();
     ctx.restore();
+
+    ctx.globalAlpha = 1.0;
     drawSmallX(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, "#e05555");
+
+    const joinActive = this.value.join_comma !== false;
+
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = joinActive ? "#1e2a1e" : "#2b2b2b";
+    roundRectPath(ctx, remX + 4, botY + 4, removeW - 8, botH - 8, 7);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.globalAlpha = 1.0;
+    drawCommaIcon(ctx, remX + 4, botY + 4, removeW - 8, botH - 8, joinActive ? "#4ade80" : "#9ca3af");
 
     const botMid = botY + botH / 2;
 
@@ -1310,6 +1388,7 @@ class CsvRowWidget {
       this._bounds.drag = [handleX, handleY, handleW, handleH];
       this._bounds.file = [fileX, topY, fileW, topH];
       this._bounds.remove = [remX, topY, removeW, topH];
+      this._bounds.comma = [remX, botY, removeW, botH];
       this._bounds.sel = [selX, botY, selW, botH];
       this._bounds.out = [outX, botY, outW, botH];
     }
@@ -1414,6 +1493,12 @@ class CsvRowWidget {
 
     if (part === "remove") {
       this._handleRemove(node);
+      return true;
+    }
+
+    if (part === "comma") {
+      this.value.join_comma = !(this.value.join_comma !== false);
+      markGraphChanged(node);
       return true;
     }
 
@@ -1524,6 +1609,7 @@ app.registerExtension({
           if (over !== vslinxHoverNode) {
             clearHoverOnNode(vslinxHoverNode);
             vslinxHoverNode = null;
+            hideTooltip();
             setCanvasCursor("");
           }
         }
@@ -1546,6 +1632,7 @@ app.registerExtension({
           vslinxHoverNode = null;
         }
 
+        hideTooltip();
         setCanvasCursor("");
       };
 
@@ -1553,6 +1640,7 @@ app.registerExtension({
         if (vslinxDragNode?._vslinxDrag?.row?._dragging) {
           endDrag(vslinxDragNode, true);
         }
+        hideTooltip();
         setCanvasCursor("");
       };
 
@@ -1576,6 +1664,7 @@ app.registerExtension({
 
       const rows = getRowWidgets(this);
       if (rows.some((r) => r?._dragging)) {
+        hideTooltip();
         setCanvasCursor("grabbing");
         return;
       }
@@ -1583,7 +1672,8 @@ app.registerExtension({
       let cursor = "";
       let didAnyChange = false;
 
-      // header hover
+      let tooltipShown = false;
+
       const header = (this.widgets || []).find(isHeaderActionsWidget) || null;
       if (header && typeof header._rowY === "number") {
         const hy = header._rowY;
@@ -1625,7 +1715,14 @@ app.registerExtension({
 
         if (part === "drag") cursor = "grab";
         else if (part) cursor = "pointer";
+
+        if (part === "comma") {
+          tooltipShown = true;
+          showTooltip(VSLINX_COMMA_TOOLTIP_TEXT, e?.clientX, e?.clientY);
+        }
       }
+
+      if (!tooltipShown) hideTooltip();
 
       if (didAnyChange) this.setDirtyCanvas(true, true);
       setCanvasCursor(cursor);
@@ -1648,7 +1745,6 @@ app.registerExtension({
 
       const vals = info?.widgets_values || [];
 
-      // restore extras (multiple)
       const savedExtras = vals.filter((v) => v && v.type === "ExtraPromptWidget");
       node._extraPromptCounter = 0;
       for (const v of savedExtras) {
@@ -1659,7 +1755,6 @@ app.registerExtension({
         node.addCustomWidget(extra);
       }
 
-      // restore csv rows
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
 
       node._csvRowCounter = 0;
@@ -1693,7 +1788,6 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
-      // sort all rows by order, keep nonRows (spacers/buttons/header)
       const rows = getRowWidgets(node).slice();
       rows.sort((a, b) => {
         const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
@@ -1705,7 +1799,6 @@ app.registerExtension({
       node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
 
-      // if no extra prompts were saved, keep one by default
       if (!getRowWidgets(node).some((w) => w?.value?.type === "ExtraPromptWidget")) {
         addAdditionalPromptRow(node, "");
       }
@@ -1721,7 +1814,6 @@ app.registerExtension({
     ensureButtonSpacer(node, 10);
     ensureSelectButton(node);
 
-    // default one additional prompt row
     node._extraPromptCounter = 0;
     addAdditionalPromptRow(node, "");
 

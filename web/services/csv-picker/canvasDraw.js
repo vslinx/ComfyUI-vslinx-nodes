@@ -67,6 +67,44 @@ export function drawSmallX(ctx, x, y, w, h, color = "#e05555") {
   ctx.restore();
 }
 
+export function drawCommaIcon(ctx, x, y, w, h, color = "#4ade80") {
+  const cx = x + w * 0.52;
+  const cy = y + h * 0.46;
+
+  const dotR = Math.max(1.6, Math.min(w, h) * 0.10);
+  const sw = Math.max(1.8, Math.min(w, h) * 0.12);
+
+  ctx.save();
+
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tailX0 = cx + dotR * 0.1;
+  const tailY0 = cy + dotR * 0.7;
+  const tailX1 = cx - dotR * 0.9;
+  const tailY1 = cy + dotR * 2.8;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = sw;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(tailX0, tailY0);
+  ctx.quadraticCurveTo(
+    cx + dotR * 1.3,
+    cy + dotR * 2.2,
+    tailX1,
+    tailY1
+  );
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 export function drawHoverOverlay(ctx, x, y, w, h, danger = false) {
   if (w <= 2 || h <= 2) return;
   ctx.save();

@@ -456,6 +456,31 @@ def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
         out.append(s)
     return out
 
+def _boolish(v: Any, default: bool = True) -> bool:
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in ("0", "false", "no", "off", "disabled"):
+        return False
+    if s in ("1", "true", "yes", "on", "enabled"):
+        return True
+    return default
+
+
+def _ensure_trailing_comma_if_enabled(text: str, join_comma: bool) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if not join_comma:
+        return t
+    if t.rstrip().endswith((",", "，")):
+        return t.rstrip()
+    return t.rstrip() + ","
+
 class VSLinx_MultiLangPromptPicker:
     CATEGORY = "vsLinx/utility"
     FUNCTION = "run"
@@ -466,7 +491,6 @@ class VSLinx_MultiLangPromptPicker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "Join with commas?": ("BOOLEAN", {"default": True}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "display": "seed"}),
             },
             "optional": FlexibleOptionalInputType(
@@ -486,7 +510,6 @@ class VSLinx_MultiLangPromptPicker:
         return None
 
     def run(self, **kwargs):
-        join_with_commas = bool(kwargs.get("Join with commas?", True))
         seed = int(kwargs.get("seed", 0))
         control_after_generate = kwargs.get("control_after_generate", "fixed")
 
@@ -540,6 +563,8 @@ class VSLinx_MultiLangPromptPicker:
         for _, _, v in items:
             vtype = v.get("type")
 
+            join_comma = _boolish(v.get("join_comma", True), default=True)
+
             if vtype == "CsvRowWidget":
                 filename = v.get("file")
                 if not filename or not isinstance(filename, str):
@@ -565,10 +590,11 @@ class VSLinx_MultiLangPromptPicker:
 
                     out = mapping.get(key, "")
                     if out and isinstance(out, str) and out.strip():
-                        out = out.strip()
-                        final_parts.append(out)
-                        sel_preview_lines.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
-                        out_preview_lines.append(f"💬 {out}")
+                        out_clean = _ensure_trailing_comma_if_enabled(out, join_comma)
+                        if out_clean:
+                            final_parts.append(out_clean)
+                            sel_preview_lines.append(f"🔀 {key}" if original_key == "Random" else f"🧾 {key}")
+                            out_preview_lines.append(f"💬 {out_clean}")
 
                 continue
 
@@ -580,29 +606,22 @@ class VSLinx_MultiLangPromptPicker:
                 if not text:
                     continue
 
-                final_parts.append(text)
+                text_clean = _ensure_trailing_comma_if_enabled(text, join_comma)
+                if not text_clean:
+                    continue
+
+                final_parts.append(text_clean)
 
                 sel_preview_lines.append("📝 Additional prompt")
-                first_line = text.splitlines()[0].strip() if text.splitlines() else text
+                first_line = text_clean.splitlines()[0].strip() if text_clean.splitlines() else text_clean
                 if len(first_line) > 120:
                     first_line = first_line[:117] + "..."
                 out_preview_lines.append(f"💬 {first_line}")
 
-        sep = ", " if join_with_commas else " "
-        prompt_body = sep.join([p for p in final_parts if isinstance(p, str) and p != ""]).strip()
-
-        if join_with_commas and prompt_body:
-            if not prompt_body.rstrip().endswith(","):
-                prompt_body = prompt_body.rstrip() + ","
+        prompt_body = " ".join([p for p in final_parts if isinstance(p, str) and p.strip()]).strip()
 
         if pre_prompt and prompt_body:
-            if join_with_commas:
-                if pre_prompt.rstrip().endswith((",", "，")):
-                    prompt = pre_prompt.rstrip() + " " + prompt_body
-                else:
-                    prompt = pre_prompt.rstrip() + ", " + prompt_body
-            else:
-                prompt = pre_prompt.rstrip() + " " + prompt_body
+            prompt = pre_prompt.rstrip() + " " + prompt_body
         elif pre_prompt:
             prompt = pre_prompt
         else:
@@ -612,18 +631,12 @@ class VSLinx_MultiLangPromptPicker:
         node_preview_text = "\n".join(out_preview_lines) if out_preview_lines else "No output"
 
         if pre_selection:
-            if node_selection_text:
-                selection_preview = pre_selection.rstrip() + "\n" + node_selection_text
-            else:
-                selection_preview = pre_selection
+            selection_preview = pre_selection.rstrip() + ("\n" + node_selection_text if node_selection_text else "")
         else:
             selection_preview = node_selection_text
 
         if pre_preview:
-            if node_preview_text:
-                output_preview = pre_preview.rstrip() + "\n" + node_preview_text
-            else:
-                output_preview = pre_preview
+            output_preview = pre_preview.rstrip() + ("\n" + node_preview_text if node_preview_text else "")
         else:
             output_preview = node_preview_text
 
