@@ -38,7 +38,7 @@ function markGraphChanged(node) {
     node?.graph?.setDirtyCanvas?.(true, true);
     node?.graph?.change?.();
     app?.graph?.change?.();
-  } catch (_) { }
+  } catch (_) {}
 }
 
 function isDragging() {
@@ -48,6 +48,8 @@ function isDragging() {
 function clearHoverOnNode(node) {
   if (!node) return;
   let changed = false;
+
+  // clear row hovers
   for (const w of (node.widgets || [])) {
     const t = w?.value?.type;
     if ((t === "CsvRowWidget" || t === "ExtraPromptWidget") && w._hover) {
@@ -59,6 +61,14 @@ function clearHoverOnNode(node) {
       changed = true;
     }
   }
+
+  // clear header hover
+  const header = (node.widgets || []).find(isHeaderActionsWidget) || null;
+  if (header && header._hover) {
+    header._hover = null;
+    changed = true;
+  }
+
   if (node._vslinxDrag) {
     node._vslinxDrag = null;
     changed = true;
@@ -124,19 +134,18 @@ function recomputeNodeSize(node) {
       node.size[0] = Math.max(node.size[0], computed[0]);
       node.size[1] = Math.max(80, computed[1]);
     }
-  } catch (_) { }
+  } catch (_) {}
 }
 
 const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
+const HEADER_ACTIONS_ID = "vslinx_header_actions";
 const BUTTON_SPACER_ID = "vslinx_select_csv_spacer";
 const BUTTON_ID = "vslinx_select_csv_button";
 const BUTTON_LABEL = "Select CSV File";
 
-const EXTRA_PROMPT_ID = "vslinx_extra_prompt_row";
-const EXTRA_PROMPT_NAME = "csv_additional_prompt";
-
 const LIST_SIDE_MARGIN = (globalThis?.LiteGraph?.NODE_WIDGET_MARGIN ?? 10);
 const ROW_HEIGHT = 54;
+const HEADER_HEIGHT = 40;
 
 const DRAG_SNAP_FRACTION = 0.50;
 const DRAG_SNAP_ENTER = 0.15;
@@ -146,9 +155,9 @@ const DRAG_HANDLE_W = 22;
 const DRAG_HANDLE_GAP = 8;
 
 function isListTopSpacer(w) { return w?._vslinx_id === LIST_TOP_SPACER_ID; }
+function isHeaderActionsWidget(w) { return w?._vslinx_id === HEADER_ACTIONS_ID; }
 function isButtonSpacer(w) { return w?._vslinx_id === BUTTON_SPACER_ID; }
 function isBottomButton(w) { return w?._vslinx_id === BUTTON_ID; }
-function isExtraPromptRow(w) { return w?._vslinx_id === EXTRA_PROMPT_ID; }
 
 function updateRowOrders(node) {
   const rows = getRowWidgets(node);
@@ -171,7 +180,7 @@ function ensureListTopSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() { },
+    draw() {},
   };
 
   node.addCustomWidget(spacer);
@@ -190,26 +199,270 @@ function ensureButtonSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() { },
+    draw() {},
   };
 
   node.addCustomWidget(spacer);
   return spacer;
 }
 
+/** Simple Yes/No modal (kept inside this file so you don't need to change modals.js) */
+function showConfirmClearModal() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.background = "rgba(0,0,0,0.55)";
+    overlay.style.zIndex = "999999";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+
+    const card = document.createElement("div");
+    card.style.width = "560px";
+    card.style.maxWidth = "92vw";
+    card.style.background = "#1f1f1f";
+    card.style.border = "1px solid #444";
+    card.style.borderRadius = "12px";
+    card.style.padding = "14px";
+    card.style.color = "#eee";
+    card.style.fontFamily = "sans-serif";
+    card.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+    card.style.display = "flex";
+    card.style.flexDirection = "column";
+    card.style.gap = "12px";
+
+    const title = document.createElement("div");
+    title.textContent = "Confirm";
+    title.style.fontSize = "16px";
+    title.style.fontWeight = "700";
+
+    const msg = document.createElement("div");
+    msg.textContent = "Are you sure you want to remove all entrys from this node?";
+    msg.style.fontSize = "13px";
+    msg.style.opacity = "0.95";
+    msg.style.lineHeight = "1.35";
+
+    const buttons = document.createElement("div");
+    buttons.style.display = "flex";
+    buttons.style.gap = "8px";
+    buttons.style.justifyContent = "flex-end";
+
+    const makeBtn = (label, { bg = "#2b2b2b", border = "#555", color = "#eee" } = {}) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.padding = "8px 12px";
+      b.style.borderRadius = "10px";
+      b.style.border = `1px solid ${border}`;
+      b.style.background = bg;
+      b.style.color = color;
+      b.style.cursor = "pointer";
+      return b;
+    };
+
+    const noBtn = makeBtn("No");
+    const yesBtn = makeBtn("Yes", { bg: "#7f1d1d", border: "#a23a3a", color: "#fff" });
+
+    const close = (val) => {
+      try { document.removeEventListener("keydown", onKeyDown, true); } catch (_) {}
+      if (overlay.parentNode) document.body.removeChild(overlay);
+      resolve(val);
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") close(false);
+      if (e.key === "Enter" || e.key === "Return") close(true);
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+
+    overlay.onclick = (e) => {
+      if (e.target === overlay) close(false);
+    };
+
+    noBtn.onclick = () => close(false);
+    yesBtn.onclick = () => close(true);
+
+    buttons.appendChild(noBtn);
+    buttons.appendChild(yesBtn);
+
+    card.appendChild(title);
+    card.appendChild(msg);
+    card.appendChild(buttons);
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+  });
+}
+
+function clearAllEntries(node) {
+  // remove all CsvRowWidget + ExtraPromptWidget
+  node.widgets = (node.widgets || []).filter((w) => !isRowWidget(w));
+  node._csvRowCounter = 0;
+  node._extraPromptCounter = 0;
+
+  layoutWidgets(node);
+  recomputeNodeSize(node);
+  markGraphChanged(node);
+
+  toast("info", "Cleared", "All entries removed from this node.", 2200);
+}
+
+class HeaderActionsWidget {
+  constructor(name = "vslinx_header_actions") {
+    this.name = name;
+    this.type = "custom";
+    this.value = { type: "VslinxHeaderActions", order: -999999 };
+    this._vslinx_id = HEADER_ACTIONS_ID;
+
+    this._hover = null; // "clear" | "add" | null
+    this._rowY = null;
+
+    this._bounds = {
+      clear: [0, 0, 0, 0],
+      add: [0, 0, 0, 0],
+    };
+  }
+
+  computeSize() { return [0, HEADER_HEIGHT]; }
+  serializeValue() { return undefined; } // not serialized
+
+  _hitPart(pos) {
+    const x = pos[0];
+    const y = pos[1];
+    const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+    if (inRect(this._bounds.clear)) return "clear";
+    if (inRect(this._bounds.add)) return "add";
+    return null;
+  }
+
+  draw(ctx, node, _width, y) {
+    this._rowY = y;
+
+    const x = LIST_SIDE_MARGIN;
+    const w = Math.max(0, (node?.size?.[0] ?? _width) - LIST_SIDE_MARGIN * 2);
+    const h = HEADER_HEIGHT;
+
+    const yy = y + 2;
+    const hh = Math.max(0, h - 4);
+
+    const clearW = Math.floor(w * 0.30);
+    const addW = Math.max(0, w - clearW - 8);
+    const gap = 8;
+
+    const clearX = x;
+    const addX = x + clearW + gap;
+
+    ctx.save();
+
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "#2b2b2b";
+    roundRectPath(ctx, clearX, yy, clearW, hh, 10);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, clearX, yy, clearW, hh, 10);
+    ctx.stroke();
+
+    if (this._hover === "clear") drawHoverOverlay(ctx, clearX, yy, clearW, hh, true);
+
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "#1e3a8a";
+    roundRectPath(ctx, addX, yy, addW, hh, 10);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = "#2b6cb0";
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, addX, yy, addW, hh, 10);
+    ctx.stroke();
+
+    if (this._hover === "add") drawHoverOverlay(ctx, addX, yy, addW, hh, false);
+
+    const prevFont = ctx.font;
+    const prevAlign = ctx.textAlign;
+    const prevBase = ctx.textBaseline;
+
+    ctx.font = prevFont;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "#eee";
+    ctx.fillText("Clear", clearX + clearW / 2, yy + hh / 2);
+
+    ctx.globalAlpha = 0.98;
+    ctx.fillStyle = "#fff";
+    ctx.fillText("Add empty prompt", addX + addW / 2, yy + hh / 2);
+
+    ctx.font = prevFont;
+    ctx.textAlign = prevAlign;
+    ctx.textBaseline = prevBase;
+
+    ctx.restore();
+
+    this._bounds.clear = [clearX, yy, clearW, hh];
+    this._bounds.add = [addX, yy, addW, hh];
+  }
+
+  mouse(event, pos, node) {
+    const t = event?.type || "";
+    const isDown = (t === "pointerdown" || t === "mousedown");
+    if (!isDown) return false;
+    if (event.button !== 0) return false;
+
+    const part = this._hitPart(pos);
+    if (!part) return false;
+
+    if (part === "clear") {
+      showConfirmClearModal().then((yes) => {
+        if (!yes) return;
+        clearAllEntries(node);
+      });
+      return true;
+    }
+
+    if (part === "add") {
+      addAdditionalPromptRow(node, "");
+      return true;
+    }
+
+    return false;
+  }
+}
+
+function ensureHeaderActions(node) {
+  const existing = (node.widgets || []).find(isHeaderActionsWidget);
+  if (existing) return existing;
+
+  const w = new HeaderActionsWidget();
+  w.serialize = false;
+  node.addCustomWidget(w);
+
+  layoutWidgets(node);
+  return w;
+}
+
 function layoutWidgets(node) {
   const widgets = node.widgets || [];
   const rows = widgets.filter(isRowWidget);
+
   const topSpacer = widgets.find(isListTopSpacer) || null;
+  const header = widgets.find(isHeaderActionsWidget) || null;
   const btnSpacer = widgets.find(isButtonSpacer) || null;
   const btn = widgets.find(isBottomButton) || null;
 
   const rest = widgets.filter((w) => {
     if (isRowWidget(w)) return false;
     if (w === topSpacer) return false;
+    if (w === header) return false;
     if (w === btnSpacer) return false;
     if (w === btn) return false;
+
     if (isListTopSpacer(w)) return false;
+    if (isHeaderActionsWidget(w)) return false;
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
     return true;
@@ -217,6 +470,7 @@ function layoutWidgets(node) {
 
   const next = [...rest];
   if (topSpacer) next.push(topSpacer);
+  if (header) next.push(header);
   next.push(...rows);
   if (btnSpacer) next.push(btnSpacer);
   if (btn) next.push(btn);
@@ -229,13 +483,13 @@ function removeAllVslinxUiWidgets(node) {
   node.widgets = (node.widgets || []).filter((w) => {
     if (isRowWidget(w)) return false;
     if (isListTopSpacer(w)) return false;
+    if (isHeaderActionsWidget(w)) return false;
     if (isButtonSpacer(w)) return false;
     if (isBottomButton(w)) return false;
-    if (isExtraPromptRow(w)) return false;
     if (w?._vslinx_id === LIST_TOP_SPACER_ID) return false;
+    if (w?._vslinx_id === HEADER_ACTIONS_ID) return false;
     if (w?._vslinx_id === BUTTON_SPACER_ID) return false;
     if (w?._vslinx_id === BUTTON_ID) return false;
-    if (w?._vslinx_id === EXTRA_PROMPT_ID) return false;
     return true;
   });
 }
@@ -306,11 +560,28 @@ async function addSingleFileToNode(node, filename) {
   markGraphChanged(node);
 }
 
+function addAdditionalPromptRow(node, initialText = "") {
+  node._extraPromptCounter = (node._extraPromptCounter || 0) + 1;
+  const name = `csv_additional_prompt_${node._extraPromptCounter}`;
+  const w = new ExtraPromptWidget(name);
+  w.value.text = String(initialText ?? "");
+  node.addCustomWidget(w);
+
+  w.value.order = getRowWidgets(node).length;
+
+  layoutWidgets(node);
+  recomputeNodeSize(node);
+  markGraphChanged(node);
+
+  toast("info", "Added", "Additional prompt row added.", 1600);
+}
+
 function ensureSelectButton(node) {
   const existing = (node.widgets || []).find(isBottomButton);
   if (existing) return existing;
 
   ensureListTopSpacer(node, 10);
+  ensureHeaderActions(node);
   ensureButtonSpacer(node, 10);
 
   const btn = node.addWidget("button", BUTTON_LABEL, null, async () => {
@@ -506,9 +777,11 @@ class ExtraPromptWidget {
     this._hover = null;
     this._rowY = null;
     this._dragging = false;
+
     this._bounds = {
       drag: [0, 0, 0, 0],
       edit: [0, 0, 0, 0],
+      remove: [0, 0, 0, 0],
     };
   }
 
@@ -520,8 +793,19 @@ class ExtraPromptWidget {
     const y = pos[1];
     const inRect = (r) => x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
     if (inRect(this._bounds.drag)) return "drag";
+    if (inRect(this._bounds.remove)) return "remove";
     if (inRect(this._bounds.edit)) return "edit";
     return null;
+  }
+
+  _handleRemove(node) {
+    const idx = node.widgets.indexOf(this);
+    if (idx !== -1) node.widgets.splice(idx, 1);
+
+    // allow deleting the last additional prompt row (no auto re-add)
+    layoutWidgets(node);
+    recomputeNodeSize(node);
+    markGraphChanged(node);
   }
 
   _render(ctx, node, _width, y, { ghost = false } = {}) {
@@ -540,26 +824,44 @@ class ExtraPromptWidget {
 
     const handleX = x;
     const handleY = yy;
+    const handleH = hh;
 
     const tableX = x + handleW + gap;
     const tableW = Math.max(0, w - handleW - gap);
 
+    // match CsvRowWidget geometry
+    const topH = Math.floor(hh * 0.52);
+    const botH = hh - topH;
+
+    const topY = yy;
+    const botY = yy + topH;
+
+    const removeW = Math.max(28, Math.floor(tableW * 0.06));
+    const mainW = Math.max(0, tableW - removeW);
+
+    const mainX = tableX;
+    const remX = tableX + mainW;
+
     ctx.save();
 
+    // drag handle
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#232323";
-    roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
+    roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
     ctx.fill();
 
     ctx.globalAlpha = 0.85;
     ctx.strokeStyle = "#3f3f3f";
     ctx.lineWidth = 1;
-    roundRectPath(ctx, handleX, handleY, handleW, hh, 7);
+    roundRectPath(ctx, handleX, handleY, handleW, handleH, 7);
     ctx.stroke();
 
-    if (this._hover === "drag" || this._dragging) drawHoverOverlay(ctx, handleX, handleY, handleW, hh, false);
-    drawGripDots(ctx, handleX, handleY, handleW, hh, this._dragging);
+    if (this._hover === "drag" || this._dragging) {
+      drawHoverOverlay(ctx, handleX, handleY, handleW, handleH, false);
+    }
+    drawGripDots(ctx, handleX, handleY, handleW, handleH, this._dragging);
 
+    // table
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = "#262626";
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
@@ -571,8 +873,38 @@ class ExtraPromptWidget {
     roundRectPath(ctx, tableX, yy, tableW, hh, 7);
     ctx.stroke();
 
-    if (this._hover === "edit") drawHoverOverlay(ctx, tableX, yy, tableW, hh, false);
+    // separators
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = "#3a3a3a";
+    ctx.beginPath();
+    ctx.moveTo(tableX + 6, botY);
+    ctx.lineTo(tableX + tableW - 6, botY);
+    ctx.moveTo(remX, topY + 3);
+    ctx.lineTo(remX, topY + topH - 3);
+    ctx.stroke();
 
+    // hover overlays
+    if (this._hover === "remove") {
+      drawHoverOverlay(ctx, remX, topY, removeW, topH, true);
+    } else if (this._hover === "edit") {
+      drawHoverOverlay(ctx, mainX, yy, mainW, hh, false);
+    }
+
+    // REMOVE BUTTON (match CsvRowWidget)
+    // IMPORTANT: ensure alpha is exactly the same as CsvRowWidget for the button bg
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "#2a1e1e";
+    roundRectPath(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, 7);
+    ctx.fill();
+    ctx.restore();
+
+    // IMPORTANT: force alpha back to 1.0 before drawing the X
+    // (CsvRowWidget has globalAlpha=1.0 here, which is why its X is brighter)
+    ctx.globalAlpha = 1.0;
+    drawSmallX(ctx, remX + 4, topY + 4, removeW - 8, topH - 8, "#e05555");
+
+    // text
     ctx.globalAlpha = 1.0;
     ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
 
@@ -583,21 +915,21 @@ class ExtraPromptWidget {
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
 
-    const mid = yy + hh / 2;
-
+    const topMid = topY + topH / 2;
     ctx.save();
-    ctx.globalAlpha = 0.80;
-    ctx.fillText("Additional prompt:", tableX + 10, mid - 9);
+    ctx.globalAlpha = 0.85;
+    ctx.fillText("Additional prompt:", mainX + 10, topMid);
     ctx.restore();
 
     const raw = String(this.value.text ?? "").replace(/\r/g, "");
     const firstLine = (raw.split("\n")[0] ?? "").trim();
     const preview = firstLine || "(click to edit)";
 
+    const botMid = botY + botH / 2;
     ctx.save();
     ctx.globalAlpha = 0.95;
     const maxW = Math.max(0, tableW - 20);
-    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, mid + 9);
+    ctx.fillText(ellipsizeToWidth(ctx, preview, maxW), tableX + 10, botMid);
     ctx.restore();
 
     ctx.font = prevFont;
@@ -607,7 +939,8 @@ class ExtraPromptWidget {
     ctx.restore();
 
     if (!ghost) {
-      this._bounds.drag = [handleX, handleY, handleW, hh];
+      this._bounds.drag = [handleX, handleY, handleW, handleH];
+      this._bounds.remove = [remX, topY, removeW, topH];
       this._bounds.edit = [tableX, yy, tableW, hh];
     }
   }
@@ -707,6 +1040,11 @@ class ExtraPromptWidget {
       return true;
     }
 
+    if (part === "remove") {
+      this._handleRemove(node);
+      return true;
+    }
+
     if (part === "edit") {
       showAdditionalPromptModal(this.value.text || "").then((txt) => {
         if (txt === null) return;
@@ -719,18 +1057,6 @@ class ExtraPromptWidget {
 
     return false;
   }
-}
-
-function ensureExtraPromptRow(node) {
-  const existing = (node.widgets || []).find(isExtraPromptRow);
-  if (existing) return existing;
-
-  const w = new ExtraPromptWidget(EXTRA_PROMPT_NAME);
-  w._vslinx_id = EXTRA_PROMPT_ID;
-  node.addCustomWidget(w);
-
-  layoutWidgets(node);
-  return w;
 }
 
 class CsvRowWidget {
@@ -1257,6 +1583,26 @@ app.registerExtension({
       let cursor = "";
       let didAnyChange = false;
 
+      // header hover
+      const header = (this.widgets || []).find(isHeaderActionsWidget) || null;
+      if (header && typeof header._rowY === "number") {
+        const hy = header._rowY;
+        const inHeader = pos[1] >= hy && pos[1] <= hy + HEADER_HEIGHT;
+        if (inHeader) {
+          const part = header._hitPart(pos);
+          if (header._hover !== part) {
+            header._hover = part;
+            didAnyChange = true;
+          }
+          if (part) cursor = "pointer";
+        } else {
+          if (header._hover) {
+            header._hover = null;
+            didAnyChange = true;
+          }
+        }
+      }
+
       for (const row of rows) {
         const rowY = row._rowY;
         if (typeof rowY !== "number") continue;
@@ -1296,17 +1642,24 @@ app.registerExtension({
       removeAllVslinxUiWidgets(node);
 
       ensureListTopSpacer(node, 10);
+      ensureHeaderActions(node);
       ensureButtonSpacer(node, 10);
       ensureSelectButton(node);
 
       const vals = info?.widgets_values || [];
 
-      const savedExtra = vals.find((v) => v && v.type === "ExtraPromptWidget");
-      const extra = ensureExtraPromptRow(node);
-      if (savedExtra && typeof savedExtra === "object") {
-        extra.value = { ...extra.value, ...savedExtra };
+      // restore extras (multiple)
+      const savedExtras = vals.filter((v) => v && v.type === "ExtraPromptWidget");
+      node._extraPromptCounter = 0;
+      for (const v of savedExtras) {
+        node._extraPromptCounter += 1;
+        const name = `csv_additional_prompt_${node._extraPromptCounter}`;
+        const extra = new ExtraPromptWidget(name);
+        extra.value = { ...extra.value, ...v };
+        node.addCustomWidget(extra);
       }
 
+      // restore csv rows
       const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
 
       node._csvRowCounter = 0;
@@ -1333,7 +1686,6 @@ app.registerExtension({
           node.setDirtyCanvas(true, true);
         }).catch((e) => {
           console.warn("[vsLinx] restore setFile failed for", v.file, e);
-
           layoutWidgets(node);
           node.setDirtyCanvas(true, true);
         });
@@ -1341,6 +1693,7 @@ app.registerExtension({
 
       node._vslinxDrag = null;
 
+      // sort all rows by order, keep nonRows (spacers/buttons/header)
       const rows = getRowWidgets(node).slice();
       rows.sort((a, b) => {
         const ao = Number.isFinite(a?.value?.order) ? a.value.order : 0;
@@ -1352,16 +1705,25 @@ app.registerExtension({
       node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
 
+      // if no extra prompts were saved, keep one by default
+      if (!getRowWidgets(node).some((w) => w?.value?.type === "ExtraPromptWidget")) {
+        addAdditionalPromptRow(node, "");
+      }
+
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
     };
 
     removeAllVslinxUiWidgets(node);
+
     ensureListTopSpacer(node, 10);
+    ensureHeaderActions(node);
     ensureButtonSpacer(node, 10);
     ensureSelectButton(node);
 
-    ensureExtraPromptRow(node);
+    // default one additional prompt row
+    node._extraPromptCounter = 0;
+    addAdditionalPromptRow(node, "");
 
     node._vslinxDrag = null;
 
