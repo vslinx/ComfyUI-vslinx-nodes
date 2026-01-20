@@ -243,11 +243,24 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
 
     let entries = normalizeEntries(entriesOrFiles);
 
-    const normPath = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
-    const normFile = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+    const normPath = (p) =>
+      String(p ?? "")
+        .replace(/\\/g, "/")
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "")
+        .trim();
+
+    const normFile = (p) =>
+      String(p ?? "")
+        .replace(/\\/g, "/")
+        .replace(/^\/+/, "")
+        .trim();
 
     const selectedFiles = new Set();
     const selectedFolders = new Set();
+
+    const excludedFiles = new Set();
+    const excludedFolders = new Set();
 
     const selectedFolderOrder = [];
     let targetFolder = "";
@@ -328,7 +341,6 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         inContentsBtn.style.background = "#2b2b2b";
       }
     }
-
     setInContentsVisual();
 
     searchRow.appendChild(search);
@@ -400,7 +412,6 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       addBtn.style.cursor = on ? "pointer" : "default";
       addBtn.style.filter = on ? "none" : "grayscale(0.7)";
     }
-
     setAddEnabled(false);
 
     const close = (val) => {
@@ -439,17 +450,113 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       }
     }
 
+    const isUnder = (child, parent) => {
+      const c = normPath(child);
+      const p = normPath(parent);
+      if (!c || !p) return false;
+      return c === p || c.startsWith(p + "/");
+    };
+
+    const isCoveredBySelectedFolder = (fileOrFolderPath) => {
+      const p = normPath(fileOrFolderPath);
+      if (!p) return false;
+      for (const f of selectedFolders) {
+        if (isUnder(p, f)) return true;
+      }
+      return false;
+    };
+
+    const isCoveredByExcludedFolder = (fileOrFolderPath) => {
+      const p = normPath(fileOrFolderPath);
+      if (!p) return false;
+      for (const f of excludedFolders) {
+        if (isUnder(p, f)) return true;
+      }
+      return false;
+    };
+
+    const isFolderEffectivelySelected = (folderPath) => {
+      const p = normPath(folderPath);
+      if (!p) return false;
+
+      if (selectedFolders.has(p)) return true;
+
+      if (isCoveredBySelectedFolder(p) && !isCoveredByExcludedFolder(p) && !excludedFolders.has(p)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const isFileEffectivelySelected = (filePath) => {
+      const f = normFile(filePath);
+      if (!f) return false;
+
+      if (selectedFiles.has(f)) return true;
+
+      if (isCoveredBySelectedFolder(f) && !isCoveredByExcludedFolder(f) && !excludedFiles.has(f)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    function computeEffectiveFilesOrdered() {
+      const out = [];
+      const files = Array.isArray(entries?.files) ? entries.files : [];
+      for (const fnRaw of files) {
+        const fn = normFile(fnRaw);
+        if (!fn) continue;
+
+        if (selectedFiles.has(fn)) {
+          out.push(fn);
+          continue;
+        }
+
+        if (isCoveredBySelectedFolder(fn) && !isCoveredByExcludedFolder(fn) && !excludedFiles.has(fn)) {
+          out.push(fn);
+        }
+      }
+      const seen = new Set();
+      return out.filter((f) => (seen.has(f) ? false : (seen.add(f), true)));
+    }
+
     function updateAddButtonState() {
       if (mode !== "multi") return;
-      const has = (selectedFiles.size + selectedFolders.size) > 0;
-      setAddEnabled(has);
+
+      const anyIntent = selectedFiles.size > 0 || selectedFolders.size > 0 || excludedFiles.size > 0 || excludedFolders.size > 0;
+      setAddEnabled(anyIntent);
     }
 
     function toggleFileSelected(path) {
-      const p = normFile(path);
-      if (!p) return;
-      if (selectedFiles.has(p)) selectedFiles.delete(p);
-      else selectedFiles.add(p);
+      const f = normFile(path);
+      if (!f) return;
+
+      const effective = isFileEffectivelySelected(f);
+
+      if (selectedFiles.has(f)) {
+        selectedFiles.delete(f);
+
+        if (isCoveredBySelectedFolder(f) && !isCoveredByExcludedFolder(f)) {
+          excludedFiles.add(f);
+        } else {
+          excludedFiles.delete(f);
+        }
+
+        updateAddButtonState();
+        return;
+      }
+
+      if (effective && isCoveredBySelectedFolder(f) && !isCoveredByExcludedFolder(f)) {
+        if (excludedFiles.has(f)) excludedFiles.delete(f);
+        else excludedFiles.add(f);
+
+        updateAddButtonState();
+        return;
+      }
+
+      excludedFiles.delete(f);
+      selectedFiles.add(f);
       updateAddButtonState();
     }
 
@@ -457,20 +564,43 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       const p = normPath(path);
       if (!p) return;
 
+      const effective = isFolderEffectivelySelected(p);
+
       if (selectedFolders.has(p)) {
         selectedFolders.delete(p);
+
         const idx = selectedFolderOrder.indexOf(p);
         if (idx !== -1) selectedFolderOrder.splice(idx, 1);
+
+        if (isCoveredBySelectedFolder(p) && !isCoveredByExcludedFolder(p)) {
+          excludedFolders.add(p);
+        } else {
+          excludedFolders.delete(p);
+        }
+
         if (targetFolder === p) {
           targetFolder = selectedFolderOrder.length ? selectedFolderOrder[selectedFolderOrder.length - 1] : "";
         }
-      } else {
-        selectedFolders.add(p);
-        const idx = selectedFolderOrder.indexOf(p);
-        if (idx !== -1) selectedFolderOrder.splice(idx, 1);
-        selectedFolderOrder.push(p);
-        targetFolder = p;
+
+        updateAddButtonState();
+        return;
       }
+
+      if (effective && isCoveredBySelectedFolder(p) && !isCoveredByExcludedFolder(p)) {
+        if (excludedFolders.has(p)) excludedFolders.delete(p);
+        else excludedFolders.add(p);
+
+        updateAddButtonState();
+        return;
+      }
+
+      excludedFolders.delete(p);
+      selectedFolders.add(p);
+
+      const idx = selectedFolderOrder.indexOf(p);
+      if (idx !== -1) selectedFolderOrder.splice(idx, 1);
+      selectedFolderOrder.push(p);
+      targetFolder = p;
 
       updateAddButtonState();
     }
@@ -554,9 +684,16 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
 
       const out = {
         mode: "multi",
+
         files: Array.from(selectedFiles),
         folders: Array.from(selectedFolders),
+
+        exclude_files: Array.from(excludedFiles),
+        exclude_folders: Array.from(excludedFolders),
+
+        effective_files: computeEffectiveFilesOrdered(),
       };
+
       close(out);
     };
 
@@ -630,9 +767,8 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         else row.style.background = "transparent";
       };
 
-      let cb = null;
       if (mode === "multi") {
-        cb = makeCheckbox(isSelected);
+        const cb = makeCheckbox(isSelected);
         cb.onchange = (e) => {
           e.stopPropagation();
           onToggle?.();
@@ -814,7 +950,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
 
           for (const fn of shown) {
             const isActive = (String(fn) === String(current));
-            const isSel = mode === "multi" ? selectedFiles.has(normFile(fn)) : false;
+            const isSel = mode === "multi" ? isFileEffectivelySelected(fn) : false;
 
             const row = renderRowBase({
               isFolder: false,
@@ -826,11 +962,8 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
               canExpand: false,
               onToggle: mode === "multi" ? () => toggleFileSelected(fn) : null,
               onOpenOrPick: () => {
-                if (mode === "single") {
-                  close(fn);
-                } else {
-                  close({ mode: "single", file: fn });
-                }
+                if (mode === "single") close(fn);
+                else close({ mode: "single", file: fn });
               },
             });
 
@@ -873,7 +1006,8 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
 
             const label = entry.name;
             const prefix = canExpand ? (isOpen ? "▼ " : "▶ ") : "";
-            const isSel = mode === "multi" ? selectedFolders.has(normPath(entry.path)) : false;
+
+            const isSel = mode === "multi" ? isFolderEffectivelySelected(entry.path) : false;
             const isT = mode === "multi" ? (normPath(entry.path) === normPath(targetFolder)) : false;
 
             const row = renderRowBase({
@@ -909,7 +1043,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
           }
 
           const isActive = (String(entry.path) === String(current));
-          const isSel = mode === "multi" ? selectedFiles.has(normFile(entry.path)) : false;
+          const isSel = mode === "multi" ? isFileEffectivelySelected(entry.path) : false;
 
           const row = renderRowBase({
             isFolder: false,
@@ -948,7 +1082,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         list.innerHTML = "";
         for (const fn of (entries.files || [])) {
           const isActive = (String(fn) === String(current));
-          const isSel = mode === "multi" ? selectedFiles.has(normFile(fn)) : false;
+          const isSel = mode === "multi" ? isFileEffectivelySelected(fn) : false;
 
           const row = renderRowBase({
             isFolder: false,
@@ -1007,7 +1141,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
 
       for (const r of results) {
         const isActive = (String(r.fn) === String(current));
-        const isSel = mode === "multi" ? selectedFiles.has(normFile(r.fn)) : false;
+        const isSel = mode === "multi" ? isFileEffectivelySelected(r.fn) : false;
 
         const row = renderRowBase({
           isFolder: false,
@@ -1084,6 +1218,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 
+    updateAddButtonState();
     render("", false);
     setTimeout(() => search.focus(), 0);
   });

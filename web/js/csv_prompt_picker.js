@@ -78,7 +78,7 @@ function markGraphChanged(node) {
     node?.graph?.setDirtyCanvas?.(true, true);
     node?.graph?.change?.();
     app?.graph?.change?.();
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function isDragging() {
@@ -174,7 +174,39 @@ function recomputeNodeSize(node) {
       node.size[0] = Math.max(node.size[0], computed[0]);
       node.size[1] = Math.max(80, computed[1]);
     }
-  } catch (_) {}
+  } catch (_) { }
+}
+
+function ensureCsvRowValue(widget) {
+  if (widget && (!widget.value || typeof widget.value !== "object")) {
+    widget.value = {
+      type: "CsvRowWidget",
+      file: "",
+      key: "(None)",
+      keys: [],
+      order: 0,
+      join_comma: true,
+    };
+  } else {
+    if (typeof widget.value.join_comma === "undefined") widget.value.join_comma = true;
+    if (!Array.isArray(widget.value.keys)) widget.value.keys = [];
+    if (typeof widget.value.order !== "number") widget.value.order = Number(widget.value.order || 0) || 0;
+  }
+}
+
+function ensureExtraPromptValue(widget) {
+  if (widget && (!widget.value || typeof widget.value !== "object")) {
+    widget.value = {
+      type: "ExtraPromptWidget",
+      text: "",
+      order: 0,
+      join_comma: true,
+    };
+  } else {
+    if (typeof widget.value.join_comma === "undefined") widget.value.join_comma = true;
+    if (typeof widget.value.order !== "number") widget.value.order = Number(widget.value.order || 0) || 0;
+    if (typeof widget.value.text !== "string") widget.value.text = String(widget.value.text ?? "");
+  }
 }
 
 const LIST_TOP_SPACER_ID = "vslinx_list_top_spacer";
@@ -220,7 +252,7 @@ function ensureListTopSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -239,7 +271,7 @@ function ensureButtonSpacer(node, height = 10) {
     serialize: false,
     serializeValue() { return undefined; },
     computeSize() { return [0, height]; },
-    draw() {},
+    draw() { },
   };
 
   node.addCustomWidget(spacer);
@@ -303,7 +335,7 @@ function showConfirmClearModal() {
     const yesBtn = makeBtn("Yes", { bg: "#7f1d1d", border: "#a23a3a", color: "#fff" });
 
     const close = (val) => {
-      try { document.removeEventListener("keydown", onKeyDown, true); } catch (_) {}
+      try { document.removeEventListener("keydown", onKeyDown, true); } catch (_) { }
       if (overlay.parentNode) document.body.removeChild(overlay);
       resolve(val);
     };
@@ -559,23 +591,76 @@ async function createFolder(path) {
   }
 }
 
-function expandSelectionsToFiles(allFiles, selectedFiles, selectedFolders) {
-  const norm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
-  const filesSet = new Set((selectedFiles || []).map(norm).filter(Boolean));
-  const folders = (selectedFolders || [])
-    .map((p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""))
-    .filter(Boolean);
+function expandSelectionsToFiles(allFiles, selectedFiles, selectedFolders, excludeFiles = [], excludeFolders = []) {
+  const normPath = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  const normFile = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
 
-  for (const folder of folders) {
-    const prefix = folder ? (folder + "/") : "";
-    for (const f of (allFiles || [])) {
-      const ff = norm(f);
-      if (!ff) continue;
-      if (folder && ff.startsWith(prefix)) filesSet.add(ff);
+  const filesOrdered = Array.isArray(allFiles) ? allFiles.map(normFile).filter(Boolean) : [];
+
+  const explicitFiles = new Set((Array.isArray(selectedFiles) ? selectedFiles : []).map(normFile).filter(Boolean));
+  const folderRoots = (Array.isArray(selectedFolders) ? selectedFolders : []).map(normPath).filter(Boolean);
+
+  const exFiles = new Set((Array.isArray(excludeFiles) ? excludeFiles : []).map(normFile).filter(Boolean));
+  const exFolders = (Array.isArray(excludeFolders) ? excludeFolders : []).map(normPath).filter(Boolean);
+
+  const isUnder = (child, parent) => {
+    const c = normPath(child);
+    const p = normPath(parent);
+    if (!c || !p) return false;
+    return c === p || c.startsWith(p + "/");
+  };
+
+  const isFileUnderFolder = (file, folder) => {
+    const f = normFile(file);
+    const d = normPath(folder);
+    if (!f || !d) return false;
+    return f.startsWith(d + "/");
+  };
+
+  const coveredBySelectedFolder = (file) => {
+    for (const d of folderRoots) {
+      if (isFileUnderFolder(file, d)) return true;
+    }
+    return false;
+  };
+
+  const coveredByExcludedFolder = (file) => {
+    for (const d of exFolders) {
+      if (isFileUnderFolder(file, d)) return true;
+    }
+    return false;
+  };
+
+  const out = [];
+  const seen = new Set();
+
+  for (const f of filesOrdered) {
+    if (!f) continue;
+
+    if (explicitFiles.has(f)) {
+      if (!seen.has(f)) {
+        seen.add(f);
+        out.push(f);
+      }
+      continue;
+    }
+
+    if (coveredBySelectedFolder(f) && !coveredByExcludedFolder(f) && !exFiles.has(f)) {
+      if (!seen.has(f)) {
+        seen.add(f);
+        out.push(f);
+      }
     }
   }
 
-  return Array.from(filesSet);
+  for (const f of explicitFiles) {
+    if (!seen.has(f)) {
+      seen.add(f);
+      out.push(f);
+    }
+  }
+
+  return out;
 }
 
 async function addSingleFileToNode(node, filename) {
@@ -650,8 +735,21 @@ function ensureSelectButton(node) {
 
       if (picked?.mode !== "multi") return true;
 
-      const allFiles = Array.isArray(entries?.files) ? entries.files : [];
-      const toAddFiles = expandSelectionsToFiles(allFiles, picked.files || [], picked.folders || []);
+      const latest = await listPromptEntries().catch(async () => {
+        const files = await listPromptFiles();
+        return { files, dirs: [] };
+      });
+
+      const allFiles = Array.isArray(latest?.files) ? latest.files : [];
+
+      const toAddFiles = expandSelectionsToFiles(
+        allFiles,
+        picked.files || [],
+        picked.folders || [],
+        picked.exclude_files || [],
+        picked.exclude_folders || [],
+      );
+
       if (!toAddFiles.length) return true;
 
       for (const filename of toAddFiles) {
@@ -848,6 +946,7 @@ class ExtraPromptWidget {
   }
 
   _render(ctx, node, _width, y, { ghost = false } = {}) {
+    ensureExtraPromptValue(this);
     if (!ghost) this._rowY = y;
 
     const height = ROW_HEIGHT;
@@ -1004,6 +1103,7 @@ class ExtraPromptWidget {
   }
 
   mouse(event, pos, node) {
+    ensureExtraPromptValue(this);
     const t = event?.type || "";
     const isDown = (t === "pointerdown" || t === "mousedown");
     const isMove = (t === "pointermove" || t === "mousemove");
@@ -1137,6 +1237,7 @@ class CsvRowWidget {
   computeSize() { return [0, ROW_HEIGHT]; }
 
   async setFile(filename, opts = {}) {
+    ensureCsvRowValue(this);
     const resetSelection = opts?.resetSelection !== false;
 
     this.value.file = filename;
@@ -1248,6 +1349,7 @@ class CsvRowWidget {
   }
 
   _render(ctx, node, _width, y, { ghost = false } = {}) {
+    ensureCsvRowValue(this);
     if (!ghost) this._rowY = y;
 
     const height = ROW_HEIGHT;
@@ -1404,6 +1506,7 @@ class CsvRowWidget {
   }
 
   mouse(event, pos, node) {
+    ensureCsvRowValue(this);
     const t = event?.type || "";
     const isDown = (t === "pointerdown" || t === "mousedown");
     const isMove = (t === "pointermove" || t === "mousemove");
@@ -1752,6 +1855,7 @@ app.registerExtension({
         const name = `csv_additional_prompt_${node._extraPromptCounter}`;
         const extra = new ExtraPromptWidget(name);
         extra.value = { ...extra.value, ...v };
+        ensureExtraPromptValue(extra);
         node.addCustomWidget(extra);
       }
 
@@ -1771,6 +1875,7 @@ app.registerExtension({
         }
 
         row.value = merged;
+        ensureCsvRowValue(row);
 
         row.setFile(v.file, { resetSelection: false }).then(() => {
           row.value.key = v.key ?? "(None)";
@@ -1799,10 +1904,6 @@ app.registerExtension({
       node.widgets = [...nonRows, ...rows];
       layoutWidgets(node);
 
-      if (!getRowWidgets(node).some((w) => w?.value?.type === "ExtraPromptWidget")) {
-        addAdditionalPromptRow(node, "");
-      }
-
       recomputeNodeSize(node);
       node.setDirtyCanvas(true, true);
     };
@@ -1815,7 +1916,6 @@ app.registerExtension({
     ensureSelectButton(node);
 
     node._extraPromptCounter = 0;
-    addAdditionalPromptRow(node, "");
 
     node._vslinxDrag = null;
 

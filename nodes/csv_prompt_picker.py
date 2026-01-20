@@ -236,24 +236,24 @@ def find_existing_filename_by_hash_in_dir(content_hash: str, rel_dir: str) -> Op
         return None
 
     try:
-        for root, _, filenames in os.walk(base):
-            for fn in filenames:
-                low = fn.lower()
-                if not low.endswith(_ALLOWED_EXTS):
-                    continue
-                full = os.path.join(root, fn)
-                if not os.path.isfile(full):
-                    continue
-                try:
-                    if sha256_file(full) == content_hash:
-                        rel = os.path.relpath(full, folder).replace("\\", "/")
-                        if rel.startswith("./"):
-                            rel = rel[2:]
-                        return rel
-                except Exception:
-                    continue
+        for fn in os.listdir(base):
+            low = fn.lower()
+            if not low.endswith(_ALLOWED_EXTS):
+                continue
+            full = os.path.join(base, fn)
+            if not os.path.isfile(full):
+                continue
+            try:
+                if sha256_file(full) == content_hash:
+                    rel = os.path.relpath(full, folder).replace("\\", "/")
+                    if rel.startswith("./"):
+                        rel = rel[2:]
+                    return rel
+            except Exception:
+                continue
     except Exception:
         pass
+
     return None
 
 @PromptServer.instance.routes.post("/vslinx/csv_prompt_mkdir")
