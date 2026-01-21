@@ -463,8 +463,6 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         addFilesBtn.style.cursor = busy ? "default" : "pointer";
         createFolderBtn.style.cursor = busy ? "default" : "pointer";
 
-        // While busy, always force-disable action buttons.
-        // When the busy state ends, we recompute the enabled state from the actual selection model.
         if (busy) {
           setAddEnabled(false);
           setDeleteEnabled(false);
@@ -699,7 +697,6 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
             return;
           }
           if (ev.key === "Enter") {
-            // Don't submit if we are disabled
             if (okB.disabled) return;
             ev.preventDefault();
             close(String(input.value ?? "").trim());
@@ -790,6 +787,48 @@ const isUnder = (child, parent) => {
       return false;
     };
 
+    const computeEffectiveFoldersForDeleteCount = () => {
+      const out = new Set();
+      const dirs = Array.isArray(entries?.dirs) ? entries.dirs : [];
+
+      const isBlockedByExclusions = (folder) => {
+        const f = normPath(folder);
+        if (!f) return true;
+
+        for (const exRaw of excludedFolders) {
+          const ex = normPath(exRaw);
+          if (!ex) continue;
+          if (ex !== f && isUnder(ex, f)) return true;
+        }
+
+        for (const xfRaw of excludedFiles) {
+          const xf = normPath(xfRaw);
+          if (!xf) continue;
+          if (isUnder(xf, f)) return true;
+        }
+
+        return false;
+      };
+
+      for (const dRaw of dirs) {
+        const d = normPath(dRaw);
+        if (!d) continue;
+        if (!isFolderEffectivelySelected(d)) continue;
+        if (isBlockedByExclusions(d)) continue;
+        out.add(d);
+      }
+
+      for (const sfRaw of selectedFolders) {
+        const sf = normPath(sfRaw);
+        if (!sf) continue;
+        if (!isFolderEffectivelySelected(sf)) continue;
+        if (isBlockedByExclusions(sf)) continue;
+        out.add(sf);
+      }
+
+      return Array.from(out);
+    };
+
     function computeEffectiveFilesOrdered() {
       const out = [];
       const files = Array.isArray(entries?.files) ? entries.files : [];
@@ -813,18 +852,12 @@ const isUnder = (child, parent) => {
     function updateAddButtonState() {
       if (mode !== "multi") return;
 
-      // While async operations are running (upload/create/delete), keep actions disabled.
-      // We'll recompute state when the busy flag is cleared.
       if (busy) {
         setAddEnabled(false);
         setDeleteEnabled(false);
         return;
       }
 
-      // "Add" is available as soon as the user has any explicit intent:
-      // - explicit file selections
-      // - explicit folder selections
-      // - overrides (excluded files/folders) that rely on a selected parent folder
       const anyIntent =
         selectedFiles.size > 0 ||
         selectedFolders.size > 0 ||
@@ -833,9 +866,7 @@ const isUnder = (child, parent) => {
 
       setAddEnabled(anyIntent);
 
-      // "Delete" should reflect what would effectively be selected right now.
       const effective = computeEffectiveFilesOrdered();
-      // Allow deleting folders even if they contain no CSV files.
       setDeleteEnabled(effective.length > 0 || selectedFolders.size > 0);
     }
 
@@ -992,8 +1023,6 @@ function toggleFileSelected(path) {
           expanded.add(acc);
         }
 
-        // Creating a folder should reset selection to avoid "ghost" selections where
-        // items look selected but the underlying selection model isn't consistent.
         resetSelectionState();
 
         render(search.value, inContentsBtn._active);
@@ -1031,12 +1060,63 @@ function toggleFileSelected(path) {
       if (mode !== "multi") return;
 
       const filesToDelete = computeEffectiveFilesOrdered();
-      const count = filesToDelete.length;
+
+      const foldersToDelete = (() => {
+        const out = new Set();
+
+        const allFolders = [];
+        if (Array.isArray(entries?.folders)) allFolders.push(...entries.folders);
+        for (const f of selectedFolders) allFolders.push(f);
+
+        for (const pRaw of allFolders) {
+          const p = normPath(pRaw);
+          if (!p) continue;
+          if (!isFolderEffectivelySelected(p)) continue;
+
+          let blocked = false;
+
+          for (const exRaw of excludedFolders) {
+            const ex = normPath(exRaw);
+            if (!ex) continue;
+            if (ex !== p && isUnder(ex, p)) {
+              blocked = true;
+              break;
+            }
+          }
+
+          if (!blocked) {
+            for (const xfRaw of excludedFiles) {
+              const xf = normPath(xfRaw);
+              if (!xf) continue;
+              if (isUnder(xf, p)) {
+                blocked = true;
+                break;
+              }
+            }
+          }
+
+          if (blocked) continue;
+          out.add(p);
+        }
+
+        return Array.from(out).sort((a, b) => b.length - a.length);
+      })();
+
+      const fileCount = filesToDelete.length;
+      const folderCount = computeEffectiveFoldersForDeleteCount().length;
+      const count = fileCount + folderCount;
       if (!count) return;
 
-            const ok = await showConfirmModal({
+      const message =
+        fileCount && folderCount
+          ? `Do you want to delete ${fileCount} file(s) and ${folderCount} folder(s)?`
+          : folderCount
+          ? `Do you want to delete ${folderCount} folder(s)?`
+          : `Do you want to delete ${fileCount} file(s)?`;
+
+      const ok = await showConfirmModal({
         title: "Delete",
-        message: `Do you want to delete ${count} file(s)?`,
+        message,
         confirmText: "Delete",
         cancelText: "Cancel",
         danger: true,
@@ -1045,14 +1125,30 @@ function toggleFileSelected(path) {
 
       setBusy(true);
       try {
-        await _deleteFiles(filesToDelete);
+        if (fileCount) {
+          await _deleteFiles(filesToDelete);
 
-        // remove deleted files from local selection state
-        for (const f of filesToDelete) {
-          const nf = normFile(f);
-          if (!nf) continue;
-          selectedFiles.delete(nf);
-          excludedFiles.delete(nf);
+          for (const f of filesToDelete) {
+            const nf = normFile(f);
+            if (!nf) continue;
+            selectedFiles.delete(nf);
+            excludedFiles.delete(nf);
+          }
+        }
+
+        if (folderCount) {
+          await _deleteFiles(foldersToDelete);
+
+          for (const p of foldersToDelete) {
+            const np = normPath(p);
+            if (!np) continue;
+
+            selectedFolders.delete(np);
+            excludedFolders.delete(np);
+
+            const idx = selectedFolderOrder.indexOf(np);
+            if (idx !== -1) selectedFolderOrder.splice(idx, 1);
+          }
         }
 
         await refreshEntriesIfPossible();

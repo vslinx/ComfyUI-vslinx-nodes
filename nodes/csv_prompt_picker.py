@@ -395,8 +395,9 @@ async def vslinx_csv_prompt_delete(request: web.Request):
 
     Notes:
       - Folder deletion is recursive.
-      - We intentionally do NOT delete parent folders of deleted folders.
       - For file deletion, we only attempt to remove the immediate parent folder if it becomes empty.
+      - Backwards-compat: if a folder path is accidentally sent in "files", we treat it as a folder deletion request
+        instead of rejecting it with "Only .csv files are allowed".
     """
     try:
         data = await request.json()
@@ -441,7 +442,7 @@ async def vslinx_csv_prompt_delete(request: web.Request):
                 return
             if not _is_inside_root(parent_dir):
                 return
-            os.rmdir(parent_dir)  # only succeeds if empty
+            os.rmdir(parent_dir)
         except Exception:
             pass
 
@@ -465,14 +466,52 @@ async def vslinx_csv_prompt_delete(request: web.Request):
             return out
         return out
 
-    # --- delete files ---
+    normalized_files: List[str] = []
+    normalized_folders: List[str] = []
+
     for raw in files_in:
-        try:
-            rel = sanitize_prompt_relpath(str(raw or ""))
-        except Exception as e:
-            failed.append({"path": str(raw), "error": str(e)})
+        raw_s = str(raw or "").strip()
+        if not raw_s:
             continue
 
+        try:
+            rel_file = sanitize_prompt_relpath(raw_s)
+            normalized_files.append(rel_file)
+            continue
+        except Exception as e:
+            msg = str(e)
+            try:
+                rel_dir = sanitize_folder_relpath(raw_s)
+                normalized_folders.append(rel_dir)
+                continue
+            except Exception:
+                failed.append({"path": raw_s, "error": msg})
+                continue
+
+    for raw in folders_in:
+        raw_s = str(raw or "").strip()
+        if not raw_s:
+            continue
+        try:
+            rel_dir = sanitize_folder_relpath(raw_s)
+            normalized_folders.append(rel_dir)
+        except Exception as e:
+            failed.append({"path": raw_s, "error": str(e)})
+
+    def _dedupe(seq: List[str]) -> List[str]:
+        seen = set()
+        out2: List[str] = []
+        for x in seq:
+            if x in seen:
+                continue
+            seen.add(x)
+            out2.append(x)
+        return out2
+
+    normalized_files = _dedupe(normalized_files)
+    normalized_folders = _dedupe(normalized_folders)
+
+    for rel in normalized_files:
         abs_path = os.path.join(folder, rel)
         if not _is_inside_root(abs_path):
             failed.append({"path": rel, "error": "Invalid path"})
@@ -494,16 +533,7 @@ async def vslinx_csv_prompt_delete(request: web.Request):
         except Exception as e:
             failed.append({"path": rel, "error": f"{e}"})
 
-    # --- delete folders (recursive) ---
-    # We do NOT delete parent folders of deleted folders.
-    # We also return the list of deleted CSV files so the frontend can clean up node rows.
-    for raw in folders_in:
-        try:
-            rel = sanitize_folder_relpath(str(raw or ""))
-        except Exception as e:
-            failed.append({"path": str(raw), "error": str(e)})
-            continue
-
+    for rel in normalized_folders:
         abs_dir = os.path.join(folder, rel)
         if not _is_inside_root(abs_dir):
             failed.append({"path": rel, "error": "Invalid path"})
@@ -517,12 +547,10 @@ async def vslinx_csv_prompt_delete(request: web.Request):
                 failed.append({"path": rel, "error": "Not a folder"})
                 continue
 
-            # Collect CSV files under this folder BEFORE deletion so we can report + invalidate caches
             csvs = _collect_csv_files_under_dir(abs_dir)
             for r in csvs:
                 invalidate_file_caches(r)
 
-            # Delete folder recursively
             shutil.rmtree(abs_dir)
 
             deleted_folders.append(rel)
@@ -530,26 +558,17 @@ async def vslinx_csv_prompt_delete(request: web.Request):
         except Exception as e:
             failed.append({"path": rel, "error": f"{e}"})
 
-    # De-dupe deleted_files while preserving a stable order
-    seen = set()
-    deduped_files: List[str] = []
-    for f in deleted_files:
-        if f in seen:
-            continue
-        seen.add(f)
-        deduped_files.append(f)
+    deleted_files = _dedupe(deleted_files)
 
     status = 200
     if failed:
         status = 207
 
-    # Backwards compatible fields:
-    # - "deleted": list of deleted files
     return web.json_response(
         {
             "ok": True,
-            "deleted": deduped_files,
-            "deleted_files": deduped_files,
+            "deleted": deleted_files,
+            "deleted_files": deleted_files,
             "deleted_folders": sorted(set(deleted_folders), key=lambda s: s.lower()),
             "missing_files": sorted(set(missing_files), key=lambda s: s.lower()),
             "missing_folders": sorted(set(missing_folders), key=lambda s: s.lower()),
