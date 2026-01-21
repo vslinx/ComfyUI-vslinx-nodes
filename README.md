@@ -103,6 +103,21 @@ You can either **connect a model**, or **provide the id**  or **title** of a `Po
 
 <img width="1766" height="498" alt="Image" src="https://github.com/user-attachments/assets/cb1d76a7-d638-4573-950e-4ae371d428be" />
 
+#### Multi-Language CSV Prompt Picker
+This node helps you build prompts from one or more CSV “prompt lists”. For each row you pick an entry (or choose `Random`), and the node combines everything into one final prompt — plus two preview outputs so you can see what was chosen.
+
+It’s especially useful if you write prompts in another language (Chinese, Japanese, Spanish, etc.) but want the final output to be English prompt text. You can keep a CSV where the **left column is your native-language key** and the **right column is the English prompt text**.
+
+Example CSV (2 columns):
+- `猫` → `cat, cute, fluffy`
+- `夜景` → `night cityscape, neon lights`
+
+You can then select `猫` inside the node UI (in your language), and the node will output the matching English prompt text.
+
+You can find a full explanation on how to use it in the documentation for the node either inside comfyui itself by clicking on the (i)-Button above the node or [here](https://github.com/vslinx/ComfyUI-vslinx-nodes/blob/main/web/docs/vsLinx_MultiLangPromptPicker.md) on github.
+
+<img width="629" height="630" alt="Image" src="https://github.com/user-attachments/assets/25be7816-4991-45f4-89a4-95f53e9b3b1b" />
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
@@ -119,6 +134,10 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.7.0
+- added new ``Multi-Language CSV Prompt Picker`` to build prompts from one or more CSV “prompt lists”. For each row you pick an entry (or choose `Random`), and the node combines everything into one final prompt — plus two preview outputs so you can see what was chosen. This is useful if you write prompts in another language (Chinese, Japanese, Spanish, etc.) but want the final output to be English prompt text. You can keep a CSV where the **left column is your native-language key** and the **right column is the English prompt text**. 
+- added new setting that optimizes tablet view to make comfyui more usable when using a tablet to work with it
+
 ### v.1.6.1
 - added filename export for ``Load (Multiple) Images (List)`` and ``Load (Multiple) Images (Batch)`` with a node-property to also dedupe the filename to remove `` (number)`` from the name in case of a duplicate filename 
 

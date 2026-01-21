@@ -8,7 +8,8 @@ node_list = [
     "inpaint_helper",
     "lora_save_helper",
     "impact_multiline_wildcard_text",
-    "upscale_by_factor_with_model"
+    "upscale_by_factor_with_model",
+    "csv_prompt_picker"
 ]
 
 NODE_CLASS_MAPPINGS = {}
