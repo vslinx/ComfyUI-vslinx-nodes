@@ -463,14 +463,14 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         addFilesBtn.style.cursor = busy ? "default" : "pointer";
         createFolderBtn.style.cursor = busy ? "default" : "pointer";
 
-        addBtn.disabled = busy || addBtn.disabled;
-        addBtn.style.opacity = (busy || addBtn.disabled) ? "0.7" : "1";
-        addBtn.style.cursor = (busy || addBtn.disabled) ? "default" : "pointer";
-
-        deleteBtn.disabled = busy || deleteBtn.disabled;
-        deleteBtn.style.opacity = (busy || deleteBtn.disabled) ? "0.7" : "1";
-        deleteBtn.style.cursor = (busy || deleteBtn.disabled) ? "default" : "pointer";
-
+        // While busy, always force-disable action buttons.
+        // When the busy state ends, we recompute the enabled state from the actual selection model.
+        if (busy) {
+          setAddEnabled(false);
+          setDeleteEnabled(false);
+        } else {
+          updateAddButtonState();
+        }
       }
     }
 
@@ -571,6 +571,165 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       });
     }
 
+    function showTextInputModal({
+      title = "Input",
+      message = "",
+      label = "Name",
+      placeholder = "",
+      defaultValue = "",
+      confirmText = "OK",
+      cancelText = "Cancel",
+      danger = false,
+    } = {}) {
+      return new Promise((resolveInput) => {
+        const ov = document.createElement("div");
+        ov.style.position = "fixed";
+        ov.style.inset = "0";
+        ov.style.background = "rgba(0,0,0,0.55)";
+        ov.style.zIndex = "1000002";
+        ov.style.display = "flex";
+        ov.style.alignItems = "center";
+        ov.style.justifyContent = "center";
+
+        const c = document.createElement("div");
+        c.style.width = "520px";
+        c.style.maxWidth = "92vw";
+        c.style.background = "#1f1f1f";
+        c.style.border = "1px solid #444";
+        c.style.borderRadius = "12px";
+        c.style.padding = "14px";
+        c.style.color = "#eee";
+        c.style.fontFamily = "sans-serif";
+        c.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+        c.style.display = "flex";
+        c.style.flexDirection = "column";
+        c.style.gap = "10px";
+
+        const t = document.createElement("div");
+        t.textContent = title;
+        t.style.fontSize = "15px";
+        t.style.fontWeight = "600";
+
+        const msg = document.createElement("div");
+        msg.textContent = message || "";
+        msg.style.fontSize = "13px";
+        msg.style.opacity = "0.9";
+        msg.style.lineHeight = "1.35";
+        msg.style.whiteSpace = "pre-wrap";
+        if (!message) msg.style.display = "none";
+
+        const field = document.createElement("div");
+        field.style.display = "flex";
+        field.style.flexDirection = "column";
+        field.style.gap = "6px";
+
+        const lab = document.createElement("div");
+        lab.textContent = label;
+        lab.style.fontSize = "12px";
+        lab.style.opacity = "0.9";
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = defaultValue || "";
+        input.placeholder = placeholder || "";
+        input.style.width = "100%";
+        input.style.padding = "10px";
+        input.style.borderRadius = "10px";
+        input.style.border = "1px solid #444";
+        input.style.background = "#111";
+        input.style.color = "#eee";
+        input.style.outline = "none";
+
+        field.appendChild(lab);
+        field.appendChild(input);
+
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "flex-end";
+        row.style.gap = "10px";
+        row.style.marginTop = "6px";
+
+        const cancelB = document.createElement("button");
+        cancelB.textContent = cancelText;
+        cancelB.style.padding = "8px 10px";
+        cancelB.style.borderRadius = "10px";
+        cancelB.style.border = "1px solid #555";
+        cancelB.style.background = "#2b2b2b";
+        cancelB.style.color = "#eee";
+        cancelB.style.cursor = "pointer";
+
+        const okB = document.createElement("button");
+        okB.textContent = confirmText;
+        okB.style.padding = "8px 10px";
+        okB.style.borderRadius = "10px";
+        okB.style.border = danger ? "1px solid #8b1a1a" : "1px solid #1f7a3a";
+        okB.style.background = danger ? "#5a1111" : "#14532d";
+        okB.style.color = "#fff";
+        okB.style.cursor = "pointer";
+
+        row.appendChild(cancelB);
+        row.appendChild(okB);
+
+        c.appendChild(t);
+        c.appendChild(msg);
+        c.appendChild(field);
+        c.appendChild(row);
+        ov.appendChild(c);
+        document.body.appendChild(ov);
+
+        const cleanup = () => document.removeEventListener("keydown", onKeyDown, true);
+
+        const close = (val) => {
+          cleanup();
+          if (ov.parentNode) document.body.removeChild(ov);
+          resolveInput(val);
+        };
+
+        const updateOk = () => {
+          const v = String(input.value ?? "").trim();
+          okB.disabled = !v;
+          okB.style.opacity = okB.disabled ? "0.7" : "1";
+          okB.style.cursor = okB.disabled ? "default" : "pointer";
+        };
+
+        const onKeyDown = (ev) => {
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            close(null);
+            return;
+          }
+          if (ev.key === "Enter") {
+            // Don't submit if we are disabled
+            if (okB.disabled) return;
+            ev.preventDefault();
+            close(String(input.value ?? "").trim());
+          }
+        };
+
+        document.addEventListener("keydown", onKeyDown, true);
+
+        ov.addEventListener("mousedown", (ev) => {
+          if (ev.target === ov) close(null);
+        });
+
+        cancelB.onclick = () => close(null);
+        okB.onclick = () => {
+          if (okB.disabled) return;
+          close(String(input.value ?? "").trim());
+        };
+
+        input.addEventListener("input", updateOk);
+        updateOk();
+
+        setTimeout(() => {
+          input.focus();
+          input.select();
+        }, 0);
+      });
+    }
+
+
+
     function resetSelectionState() {
       selectedFiles.clear();
       selectedFolders.clear();
@@ -654,6 +813,18 @@ const isUnder = (child, parent) => {
     function updateAddButtonState() {
       if (mode !== "multi") return;
 
+      // While async operations are running (upload/create/delete), keep actions disabled.
+      // We'll recompute state when the busy flag is cleared.
+      if (busy) {
+        setAddEnabled(false);
+        setDeleteEnabled(false);
+        return;
+      }
+
+      // "Add" is available as soon as the user has any explicit intent:
+      // - explicit file selections
+      // - explicit folder selections
+      // - overrides (excluded files/folders) that rely on a selected parent folder
       const anyIntent =
         selectedFiles.size > 0 ||
         selectedFolders.size > 0 ||
@@ -662,8 +833,10 @@ const isUnder = (child, parent) => {
 
       setAddEnabled(anyIntent);
 
+      // "Delete" should reflect what would effectively be selected right now.
       const effective = computeEffectiveFilesOrdered();
-      setDeleteEnabled(effective.length > 0);
+      // Allow deleting folders even if they contain no CSV files.
+      setDeleteEnabled(effective.length > 0 || selectedFolders.size > 0);
     }
 
 function toggleFileSelected(path) {
@@ -790,13 +963,23 @@ function toggleFileSelected(path) {
       const onCreateFolder = opts?.onCreateFolder;
       if (typeof onCreateFolder !== "function") return;
 
-      const name = window.prompt("Create folder (relative to input/csv):", targetFolder ? `${targetFolder}/` : "");
-      const raw = String(name ?? "").trim();
-      if (!raw) return;
+      const basePath = targetFolder ? `input/csv/${targetFolder}` : "input/csv";
+      const name = await showTextInputModal({
+        title: `Create folder under ${basePath}`,
+        message: "Type only the folder name (relative to the selected folder).",
+        label: "Folder name",
+        placeholder: "my_new_folder",
+        defaultValue: "",
+        confirmText: "Create",
+        cancelText: "Cancel",
+      });
 
-      const p = normPath(raw);
+      const rawName = String(name ?? "").trim();
+      if (!rawName) return;
+
+      const fullRaw = targetFolder ? `${targetFolder}/${rawName}` : rawName;
+      const p = normPath(fullRaw);
       if (!p) return;
-
       setBusy(true);
       try {
         await onCreateFolder(p);
@@ -808,6 +991,10 @@ function toggleFileSelected(path) {
           acc = acc ? `${acc}/${parts[i]}` : parts[i];
           expanded.add(acc);
         }
+
+        // Creating a folder should reset selection to avoid "ghost" selections where
+        // items look selected but the underlying selection model isn't consistent.
+        resetSelectionState();
 
         render(search.value, inContentsBtn._active);
       } finally {
@@ -860,6 +1047,7 @@ function toggleFileSelected(path) {
       try {
         await _deleteFiles(filesToDelete);
 
+        // remove deleted files from local selection state
         for (const f of filesToDelete) {
           const nf = normFile(f);
           if (!nf) continue;

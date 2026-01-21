@@ -168,35 +168,43 @@ function hasRowForFilename(node, filename, excludeWidget = null) {
 }
 
 function removeRowsUsingFiles(node, deletedFiles) {
-  const del = new Set((deletedFiles || []).map((s) => String(s ?? "")));
+  // Safer batch removal:
+  // - Only removes our CsvRowWidget rows whose `value.file` matches one of the deleted files
+  // - Never calls widget instance methods (which can have side effects / rely on focus)
+  // - Leaves all other widgets (including ComfyUI seed widgets) untouched
+  if (!node) return;
+
+  const toNorm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+  const del = new Set((deletedFiles || []).map(toNorm).filter(Boolean));
   if (!del.size) return;
 
-  const widgets = getRowWidgets(node);
-  for (const w of widgets) {
-    if (w?.value?.type !== "CsvRowWidget") continue;
-    const f = String(w?.value?.file ?? "");
-    if (!f) continue;
-    if (!del.has(f)) continue;
+  const widgets = node.widgets || [];
+  const beforeLen = widgets.length;
 
-    try {
-      if (typeof w._handleRemove === "function") {
-        w._handleRemove();
-      } else {
-        const idx = (node.widgets || []).indexOf(w);
-        if (idx !== -1) (node.widgets || []).splice(idx, 1);
-      }
-    } catch (_) { }
-  }
+  node.widgets = widgets.filter((w) => {
+    if (w?.value?.type !== "CsvRowWidget") return true;
+    const f = toNorm(w?.value?.file ?? "");
+    if (!f) return true;
+    return !del.has(f);
+  });
+
+  if ((node.widgets || []).length === beforeLen) return;
 
   try {
-    node.setDirtyCanvas?.(true, true);
-  } catch (_) { }
+    layoutWidgets(node);
+    recomputeNodeSize(node);
+    markGraphChanged(node);
+  } catch (_) {
+    try { node.setDirtyCanvas?.(true, true); } catch (_) { }
+  }
 }
+
 
 function removeRowsUsingFilesFromAllNodes(deletedFiles) {
   try {
     if (!Array.isArray(deletedFiles) || deletedFiles.length === 0) return;
 
+    // Normalize once to avoid path separator surprises
     const toNorm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
     const normalized = deletedFiles.map(toNorm).filter(Boolean);
     if (!normalized.length) return;
@@ -205,6 +213,7 @@ function removeRowsUsingFilesFromAllNodes(deletedFiles) {
     if (!Array.isArray(nodes) || !nodes.length) return;
 
     for (const n of nodes) {
+      // LiteGraph nodes generally expose `type` as the comfy node name
       if (!n) continue;
       const t = String(n.type ?? n.comfyClass ?? "");
       if (t !== NODE_NAME) continue;
@@ -767,11 +776,19 @@ function ensureSelectButton(node) {
         mode: "multi",
         onAddFiles: uploadFilesIntoFolder,
         onCreateFolder: createFolder,
-        onDeleteFiles: async (paths) => {
+        onDeleteFiles: async (payload) => {
+          // Backwards compatible: payload can be an array of files.
+          const body = Array.isArray(payload)
+            ? { files: payload }
+            : {
+              files: Array.isArray(payload?.files) ? payload.files : [],
+              folders: Array.isArray(payload?.folders) ? payload.folders : [],
+            };
+
           const res = await fetch("/vslinx/csv_prompt_delete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ files: Array.isArray(paths) ? paths : [] }),
+            body: JSON.stringify(body),
           });
 
           const json = await res.json().catch(() => ({}));
@@ -780,7 +797,10 @@ function ensureSelectButton(node) {
             throw new Error(msg);
           }
 
-          const deleted = Array.isArray(json?.deleted) ? json.deleted : (Array.isArray(paths) ? paths : []);
+          const deleted = Array.isArray(json?.deleted_files)
+            ? json.deleted_files
+            : (Array.isArray(json?.deleted) ? json.deleted : (Array.isArray(body?.files) ? body.files : []));
+
           removeRowsUsingFilesFromAllNodes(deleted);
           return json;
         },
@@ -1747,8 +1767,29 @@ app.registerExtension({
   async nodeCreated(node) {
     if (node.comfyClass !== NODE_NAME) return;
 
-    node.serialize_widgets = true;
 
+    // IMPORTANT:
+    // We do NOT enable `serialize_widgets` for this node, because ComfyUI/LiteGraph applies
+    // `widgets_values` positionally on load. Our custom row widgets serialize objects, which can
+    // corrupt the built-in seed widgets (e.g. control_after_generate) on a hard refresh.
+    // Instead, we persist our rows in node.properties and restore from there.
+    node.serialize_widgets = false;
+
+    const origOnSerialize = node.onSerialize;
+    node.onSerialize = function (o) {
+      origOnSerialize?.call(this, o);
+
+      try {
+        o.properties = o.properties || {};
+        const rows = (this.widgets || []).filter((w) => w?.value?.type === "CsvRowWidget").map((w) => ({ ...(w.value || {}) }));
+        const extras = (this.widgets || []).filter((w) => w?.value?.type === "ExtraPromptWidget").map((w) => ({ ...(w.value || {}) }));
+        o.properties.vslinx_csv_rows = rows;
+        o.properties.vslinx_extra_prompts = extras;
+        o.properties.vslinx_csv_prompt_picker_v = 2;
+      } catch (e) {
+        console.warn("[csv_prompt_picker] onSerialize failed:", e);
+      }
+    };
     const origOnDrawForeground = node.onDrawForeground;
     node.onDrawForeground = function (ctx) {
       origOnDrawForeground?.call(this, ctx);
@@ -1899,7 +1940,23 @@ app.registerExtension({
 
     const origConfigure = node.configure;
     node.configure = function (info) {
-      origConfigure?.call(node, info);
+      // Protect built-in widgets (seed, control_after_generate, etc.) from our custom row objects.
+      // Older saved workflows stored our custom row values inside widgets_values; LiteGraph applies
+      // widgets_values by index and that can corrupt unrelated widgets on load.
+      const originalInfo = info;
+      const safeInfo = (() => {
+        try {
+          if (!originalInfo || !Array.isArray(originalInfo.widgets_values)) return originalInfo;
+          const filtered = originalInfo.widgets_values.filter((v) => {
+            return !(v && typeof v === "object" && (v.type === "CsvRowWidget" || v.type === "ExtraPromptWidget"));
+          });
+          return { ...originalInfo, widgets_values: filtered };
+        } catch (_) {
+          return originalInfo;
+        }
+      })();
+
+      origConfigure?.call(node, safeInfo);
 
       if (vslinxDragNode === node && node._vslinxDrag?.row?._dragging) {
         endDrag(node, false);
@@ -1912,9 +1969,27 @@ app.registerExtension({
       ensureButtonSpacer(node, 10);
       ensureSelectButton(node);
 
-      const vals = info?.widgets_values || [];
+      // Restore our custom rows from node.properties (new format), with fallback to legacy widgets_values.
 
-      const savedExtras = vals.filter((v) => v && v.type === "ExtraPromptWidget");
+
+      const propRows = originalInfo?.properties?.vslinx_csv_rows;
+
+
+      const propExtras = originalInfo?.properties?.vslinx_extra_prompts;
+
+
+
+      const legacyVals = Array.isArray(originalInfo?.widgets_values) ? originalInfo.widgets_values : [];
+
+
+      const legacyExtras = legacyVals.filter((v) => v && typeof v === "object" && v.type === "ExtraPromptWidget");
+
+
+      const legacyRows = legacyVals.filter((v) => v && typeof v === "object" && v.type === "CsvRowWidget" && v.file);
+
+
+
+      const savedExtras = Array.isArray(propExtras) ? propExtras : legacyExtras;
       node._extraPromptCounter = 0;
       for (const v of savedExtras) {
         node._extraPromptCounter += 1;
@@ -1925,7 +2000,19 @@ app.registerExtension({
         node.addCustomWidget(extra);
       }
 
-      const savedRows = vals.filter((v) => v && v.type === "CsvRowWidget" && v.file);
+      const savedRows = Array.isArray(propRows) ? propRows.filter((v) => v && v.type === "CsvRowWidget" && v.file) : legacyRows;
+
+      try {
+        node.properties = node.properties || {};
+        // If we loaded from legacy widgets_values (no properties present), migrate so future saves are clean.
+        if (!Array.isArray(originalInfo?.properties?.vslinx_csv_rows) && Array.isArray(savedRows)) {
+          node.properties.vslinx_csv_rows = savedRows.map((v) => ({ ...(v || {}) }));
+        }
+        if (!Array.isArray(originalInfo?.properties?.vslinx_extra_prompts) && Array.isArray(savedExtras)) {
+          node.properties.vslinx_extra_prompts = savedExtras.map((v) => ({ ...(v || {}) }));
+        }
+        node.properties.vslinx_csv_prompt_picker_v = 2;
+      } catch (_) { }
 
       node._csvRowCounter = 0;
       for (const v of savedRows) {

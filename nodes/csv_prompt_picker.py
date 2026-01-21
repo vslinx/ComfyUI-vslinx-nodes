@@ -4,6 +4,7 @@ import csv
 import time
 import random
 import hashlib
+import shutil
 from typing import Dict, List, Tuple, Optional, Any
 
 import folder_paths
@@ -384,9 +385,18 @@ async def vslinx_csv_prompt_upload(request: web.Request):
 
 @PromptServer.instance.routes.post("/vslinx/csv_prompt_delete")
 async def vslinx_csv_prompt_delete(request: web.Request):
-    """
-    Delete CSV files from input/csv (supports subfolders).
-    Body: { "files": ["a.csv", "folder/b.csv", ...] }
+    """Delete CSV files and/or folders inside ComfyUI/input/csv.
+
+    Supports subfolders.
+
+    Request JSON:
+      - Legacy: {"files": ["a.csv", "folder/b.csv", ...]}
+      - New:    {"files": [...], "folders": ["some/folder", ...]}
+
+    Notes:
+      - Folder deletion is recursive.
+      - We intentionally do NOT delete parent folders of deleted folders.
+      - For file deletion, we only attempt to remove the immediate parent folder if it becomes empty.
     """
     try:
         data = await request.json()
@@ -394,56 +404,159 @@ async def vslinx_csv_prompt_delete(request: web.Request):
         data = {}
 
     files_in = (data or {}).get("files", [])
+    folders_in = (data or {}).get("folders", [])
+
+    if files_in is None:
+        files_in = []
+    if folders_in is None:
+        folders_in = []
+
     if not isinstance(files_in, (list, tuple)):
         return web.json_response({"error": "Invalid 'files' payload."}, status=400)
+    if not isinstance(folders_in, (list, tuple)):
+        return web.json_response({"error": "Invalid 'folders' payload."}, status=400)
 
     folder = get_promptfiles_dir()
-    deleted: List[str] = []
-    missing: List[str] = []
+    folder_real = os.path.realpath(folder)
+
+    deleted_files: List[str] = []
+    deleted_folders: List[str] = []
+    missing_files: List[str] = []
+    missing_folders: List[str] = []
     failed: List[Dict[str, str]] = []
 
-    def _cleanup_empty_parents(start_dir: str):
-        cur = os.path.abspath(start_dir)
-        root = os.path.abspath(folder)
-        while cur and cur != root and cur.startswith(root):
-            try:
-                os.rmdir(cur)
-            except Exception:
-                break
-            cur = os.path.abspath(os.path.dirname(cur))
+    def _is_inside_root(abs_path: str) -> bool:
+        try:
+            p = os.path.realpath(abs_path)
+        except Exception:
+            return False
+        return p == folder_real or p.startswith(folder_real + os.sep)
 
+    def _try_remove_immediate_parent_if_empty(file_abs_path: str):
+        try:
+            parent_dir = os.path.abspath(os.path.dirname(file_abs_path))
+            if not parent_dir:
+                return
+            if os.path.realpath(parent_dir) == folder_real:
+                return
+            if not _is_inside_root(parent_dir):
+                return
+            os.rmdir(parent_dir)  # only succeeds if empty
+        except Exception:
+            pass
+
+    def _collect_csv_files_under_dir(dir_abs_path: str) -> List[str]:
+        out: List[str] = []
+        try:
+            for root, _dirnames, filenames in os.walk(dir_abs_path):
+                for fn in filenames:
+                    low = fn.lower()
+                    if not low.endswith(_ALLOWED_EXTS):
+                        continue
+                    full = os.path.join(root, fn)
+                    if not os.path.isfile(full):
+                        continue
+                    rel = os.path.relpath(full, folder).replace("\\", "/")
+                    if rel.startswith("./"):
+                        rel = rel[2:]
+                    if rel:
+                        out.append(rel)
+        except Exception:
+            return out
+        return out
+
+    # --- delete files ---
     for raw in files_in:
         try:
             rel = sanitize_prompt_relpath(str(raw or ""))
         except Exception as e:
-            failed.append({"file": str(raw), "error": str(e)})
+            failed.append({"path": str(raw), "error": str(e)})
             continue
 
         abs_path = os.path.join(folder, rel)
+        if not _is_inside_root(abs_path):
+            failed.append({"path": rel, "error": "Invalid path"})
+            continue
 
         try:
             if not os.path.exists(abs_path):
-                missing.append(rel)
+                missing_files.append(rel)
                 continue
             if not os.path.isfile(abs_path):
-                failed.append({"file": rel, "error": "Not a file"})
+                failed.append({"path": rel, "error": "Not a file"})
                 continue
 
             os.remove(abs_path)
             invalidate_file_caches(rel)
-            deleted.append(rel)
+            deleted_files.append(rel)
 
-            parent_dir = os.path.dirname(abs_path)
-            if parent_dir and parent_dir != folder:
-                _cleanup_empty_parents(parent_dir)
+            _try_remove_immediate_parent_if_empty(abs_path)
         except Exception as e:
-            failed.append({"file": rel, "error": f"{e}"})
+            failed.append({"path": rel, "error": f"{e}"})
+
+    # --- delete folders (recursive) ---
+    # We do NOT delete parent folders of deleted folders.
+    # We also return the list of deleted CSV files so the frontend can clean up node rows.
+    for raw in folders_in:
+        try:
+            rel = sanitize_folder_relpath(str(raw or ""))
+        except Exception as e:
+            failed.append({"path": str(raw), "error": str(e)})
+            continue
+
+        abs_dir = os.path.join(folder, rel)
+        if not _is_inside_root(abs_dir):
+            failed.append({"path": rel, "error": "Invalid path"})
+            continue
+
+        try:
+            if not os.path.exists(abs_dir):
+                missing_folders.append(rel)
+                continue
+            if not os.path.isdir(abs_dir):
+                failed.append({"path": rel, "error": "Not a folder"})
+                continue
+
+            # Collect CSV files under this folder BEFORE deletion so we can report + invalidate caches
+            csvs = _collect_csv_files_under_dir(abs_dir)
+            for r in csvs:
+                invalidate_file_caches(r)
+
+            # Delete folder recursively
+            shutil.rmtree(abs_dir)
+
+            deleted_folders.append(rel)
+            deleted_files.extend(csvs)
+        except Exception as e:
+            failed.append({"path": rel, "error": f"{e}"})
+
+    # De-dupe deleted_files while preserving a stable order
+    seen = set()
+    deduped_files: List[str] = []
+    for f in deleted_files:
+        if f in seen:
+            continue
+        seen.add(f)
+        deduped_files.append(f)
 
     status = 200
     if failed:
         status = 207
 
-    return web.json_response({"ok": True, "deleted": deleted, "missing": missing, "failed": failed}, status=status)
+    # Backwards compatible fields:
+    # - "deleted": list of deleted files
+    return web.json_response(
+        {
+            "ok": True,
+            "deleted": deduped_files,
+            "deleted_files": deduped_files,
+            "deleted_folders": sorted(set(deleted_folders), key=lambda s: s.lower()),
+            "missing_files": sorted(set(missing_files), key=lambda s: s.lower()),
+            "missing_folders": sorted(set(missing_folders), key=lambda s: s.lower()),
+            "failed": failed,
+        },
+        status=status,
+    )
 
 @PromptServer.instance.routes.get("/vslinx/csv_prompt_read")
 async def vslinx_csv_prompt_read(request: web.Request):
@@ -495,48 +608,6 @@ async def vslinx_csv_prompt_list(request: web.Request):
         return web.json_response({"files": files, "dirs": dirs})
     except Exception as e:
         return web.json_response({"error": f"Failed to list files: {e}"}, status=500)
-    
-@PromptServer.instance.routes.post("/vslinx/csv_prompt_delete")
-async def vslinx_csv_prompt_delete(request: web.Request):
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-
-    files = (data or {}).get("files", None)
-    if not isinstance(files, list) or not files:
-        return web.json_response({"error": "No files provided"}, status=400)
-
-    folder = get_promptfiles_dir()
-
-    deleted: List[str] = []
-    failed: List[str] = []
-
-    for raw in files:
-        try:
-            rel = sanitize_prompt_relpath(str(raw))
-            abs_path = os.path.join(folder, rel)
-
-            abs_path_real = os.path.realpath(abs_path)
-            folder_real = os.path.realpath(folder)
-            if not abs_path_real.startswith(folder_real + os.sep) and abs_path_real != folder_real:
-                failed.append(rel)
-                continue
-
-            if not os.path.isfile(abs_path):
-                failed.append(rel)
-                continue
-
-            os.remove(abs_path)
-            invalidate_file_caches(rel)
-            deleted.append(rel)
-        except Exception:
-            try:
-                failed.append(str(raw))
-            except Exception:
-                failed.append("<?>")
-
-    return web.json_response({"deleted": deleted, "failed": failed})
 
 def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
     key = row.get("key", None)
