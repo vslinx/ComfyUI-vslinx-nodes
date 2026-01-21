@@ -396,6 +396,16 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
     cancel.style.color = "#eee";
     cancel.style.cursor = "pointer";
 
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.style.padding = "8px 10px";
+    deleteBtn.style.borderRadius = "10px";
+    deleteBtn.style.border = "1px solid #8b1a1a";
+    deleteBtn.style.background = "#5a1111";
+    deleteBtn.style.color = "#fff";
+    deleteBtn.style.cursor = "pointer";
+
+
     const addBtn = document.createElement("button");
     addBtn.textContent = "Add";
     addBtn.style.padding = "8px 14px";
@@ -412,7 +422,16 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       addBtn.style.cursor = on ? "pointer" : "default";
       addBtn.style.filter = on ? "none" : "grayscale(0.7)";
     }
+    function setDeleteEnabled(enabled) {
+      const on = !!enabled;
+      deleteBtn.disabled = !on;
+      deleteBtn.style.opacity = on ? "1" : "0.45";
+      deleteBtn.style.cursor = on ? "pointer" : "default";
+      deleteBtn.style.filter = on ? "none" : "grayscale(0.7)";
+    }
+
     setAddEnabled(false);
+    setDeleteEnabled(false);
 
     const close = (val) => {
       if (overlay.parentNode) document.body.removeChild(overlay);
@@ -447,10 +466,121 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
         addBtn.disabled = busy || addBtn.disabled;
         addBtn.style.opacity = (busy || addBtn.disabled) ? "0.7" : "1";
         addBtn.style.cursor = (busy || addBtn.disabled) ? "default" : "pointer";
+
+        deleteBtn.disabled = busy || deleteBtn.disabled;
+        deleteBtn.style.opacity = (busy || deleteBtn.disabled) ? "0.7" : "1";
+        deleteBtn.style.cursor = (busy || deleteBtn.disabled) ? "default" : "pointer";
+
       }
     }
 
-    const isUnder = (child, parent) => {
+    
+    function showConfirmModal({ title = "Confirm", message = "", confirmText = "OK", cancelText = "Cancel", danger = false } = {}) {
+      return new Promise((resolveConfirm) => {
+        const ov = document.createElement("div");
+        ov.style.position = "fixed";
+        ov.style.inset = "0";
+        ov.style.background = "rgba(0,0,0,0.55)";
+        ov.style.zIndex = "1000001";
+        ov.style.display = "flex";
+        ov.style.alignItems = "center";
+        ov.style.justifyContent = "center";
+
+        const c = document.createElement("div");
+        c.style.width = "520px";
+        c.style.maxWidth = "92vw";
+        c.style.background = "#1f1f1f";
+        c.style.border = "1px solid #444";
+        c.style.borderRadius = "12px";
+        c.style.padding = "14px";
+        c.style.color = "#eee";
+        c.style.fontFamily = "sans-serif";
+        c.style.boxShadow = "0 10px 30px rgba(0,0,0,0.35)";
+        c.style.display = "flex";
+        c.style.flexDirection = "column";
+        c.style.gap = "10px";
+
+        const t = document.createElement("div");
+        t.textContent = title;
+        t.style.fontSize = "15px";
+        t.style.fontWeight = "600";
+
+        const msg = document.createElement("div");
+        msg.textContent = message;
+        msg.style.fontSize = "13px";
+        msg.style.lineHeight = "1.35";
+        msg.style.opacity = "0.95";
+
+        const buttons = document.createElement("div");
+        buttons.style.display = "flex";
+        buttons.style.justifyContent = "flex-end";
+        buttons.style.gap = "8px";
+        buttons.style.marginTop = "4px";
+
+        const cancelB = document.createElement("button");
+        cancelB.textContent = cancelText;
+        cancelB.style.padding = "8px 10px";
+        cancelB.style.borderRadius = "10px";
+        cancelB.style.border = "1px solid #555";
+        cancelB.style.background = "#2b2b2b";
+        cancelB.style.color = "#eee";
+        cancelB.style.cursor = "pointer";
+
+        const okB = document.createElement("button");
+        okB.textContent = confirmText;
+        okB.style.padding = "8px 10px";
+        okB.style.borderRadius = "10px";
+        okB.style.border = danger ? "1px solid #8b1a1a" : "1px solid #1f7a3a";
+        okB.style.background = danger ? "#5a1111" : "#14532d";
+        okB.style.color = "#fff";
+        okB.style.cursor = "pointer";
+
+        const cleanup = () => document.removeEventListener("keydown", onKeyDown, true);
+
+        const closeConfirm = (val) => {
+          cleanup();
+          if (ov.parentNode) document.body.removeChild(ov);
+          resolveConfirm(val);
+        };
+
+        cancelB.onclick = () => closeConfirm(false);
+        okB.onclick = () => closeConfirm(true);
+
+        ov.onclick = (e) => {
+          if (e.target === ov) cancelB.onclick();
+        };
+
+        const onKeyDown = (e) => {
+          if (e.key === "Escape") cancelB.onclick();
+          if (e.key === "Enter" || e.key === "Return") okB.onclick();
+        };
+
+        document.addEventListener("keydown", onKeyDown, true);
+
+        buttons.appendChild(cancelB);
+        buttons.appendChild(okB);
+
+        c.appendChild(t);
+        c.appendChild(msg);
+        c.appendChild(buttons);
+
+        ov.appendChild(c);
+        document.body.appendChild(ov);
+
+        setTimeout(() => okB.focus(), 0);
+      });
+    }
+
+    function resetSelectionState() {
+      selectedFiles.clear();
+      selectedFolders.clear();
+      excludedFiles.clear();
+      excludedFolders.clear();
+      selectedFolderOrder.length = 0;
+      targetFolder = "";
+      updateAddButtonState();
+    }
+const isUnder = (child, parent) => {
       const c = normPath(child);
       const p = normPath(parent);
       if (!c || !p) return false;
@@ -524,11 +654,19 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
     function updateAddButtonState() {
       if (mode !== "multi") return;
 
-      const anyIntent = selectedFiles.size > 0 || selectedFolders.size > 0 || excludedFiles.size > 0 || excludedFolders.size > 0;
+      const anyIntent =
+        selectedFiles.size > 0 ||
+        selectedFolders.size > 0 ||
+        excludedFiles.size > 0 ||
+        excludedFolders.size > 0;
+
       setAddEnabled(anyIntent);
+
+      const effective = computeEffectiveFilesOrdered();
+      setDeleteEnabled(effective.length > 0);
     }
 
-    function toggleFileSelected(path) {
+function toggleFileSelected(path) {
       const f = normFile(path);
       if (!f) return;
 
@@ -677,7 +815,70 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       }
     };
 
-    addBtn.onclick = (e) => {
+    
+    async function _deleteFiles(paths) {
+      const onDeleteFiles = opts?.onDeleteFiles;
+      if (typeof onDeleteFiles === "function") {
+        return await onDeleteFiles(paths);
+      }
+
+      const res = await fetch("/vslinx/csv_prompt_delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: paths }),
+      });
+
+      let js = null;
+      try { js = await res.json(); } catch (_) { js = null; }
+
+      if (!res.ok) {
+        const msg = js?.error || `Delete failed (${res.status})`;
+        throw new Error(msg);
+      }
+      return js;
+    }
+
+    deleteBtn.onclick = async (e) => {
+      e.stopPropagation?.();
+      if (busy) return;
+      if (mode !== "multi") return;
+
+      const filesToDelete = computeEffectiveFilesOrdered();
+      const count = filesToDelete.length;
+      if (!count) return;
+
+            const ok = await showConfirmModal({
+        title: "Delete",
+        message: `Do you want to delete ${count} file(s)?`,
+        confirmText: "Delete",
+        cancelText: "Cancel",
+        danger: true,
+      });
+      if (!ok) return;
+
+      setBusy(true);
+      try {
+        await _deleteFiles(filesToDelete);
+
+        for (const f of filesToDelete) {
+          const nf = normFile(f);
+          if (!nf) continue;
+          selectedFiles.delete(nf);
+          excludedFiles.delete(nf);
+        }
+
+        await refreshEntriesIfPossible();
+        resetSelectionState();
+        render(search.value, inContentsBtn._active);
+      } catch (err) {
+        console.error(err);
+        window.alert(err?.message || String(err));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+addBtn.onclick = (e) => {
       e.stopPropagation?.();
       if (busy) return;
       if (mode !== "multi") return;
@@ -1196,6 +1397,7 @@ export function showFilePickerModal(entriesOrFiles, current = "", opts = {}) {
       leftFooter.appendChild(addFilesBtn);
       leftFooter.appendChild(createFolderBtn);
 
+      rightFooter.appendChild(deleteBtn);
       rightFooter.appendChild(cancel);
       rightFooter.appendChild(addBtn);
 

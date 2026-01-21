@@ -380,6 +380,71 @@ async def vslinx_csv_prompt_upload(request: web.Request):
 
     return web.json_response({"error": f"Invalid mode '{mode}'"}, status=400)
 
+
+
+@PromptServer.instance.routes.post("/vslinx/csv_prompt_delete")
+async def vslinx_csv_prompt_delete(request: web.Request):
+    """
+    Delete CSV files from input/csv (supports subfolders).
+    Body: { "files": ["a.csv", "folder/b.csv", ...] }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    files_in = (data or {}).get("files", [])
+    if not isinstance(files_in, (list, tuple)):
+        return web.json_response({"error": "Invalid 'files' payload."}, status=400)
+
+    folder = get_promptfiles_dir()
+    deleted: List[str] = []
+    missing: List[str] = []
+    failed: List[Dict[str, str]] = []
+
+    def _cleanup_empty_parents(start_dir: str):
+        cur = os.path.abspath(start_dir)
+        root = os.path.abspath(folder)
+        while cur and cur != root and cur.startswith(root):
+            try:
+                os.rmdir(cur)
+            except Exception:
+                break
+            cur = os.path.abspath(os.path.dirname(cur))
+
+    for raw in files_in:
+        try:
+            rel = sanitize_prompt_relpath(str(raw or ""))
+        except Exception as e:
+            failed.append({"file": str(raw), "error": str(e)})
+            continue
+
+        abs_path = os.path.join(folder, rel)
+
+        try:
+            if not os.path.exists(abs_path):
+                missing.append(rel)
+                continue
+            if not os.path.isfile(abs_path):
+                failed.append({"file": rel, "error": "Not a file"})
+                continue
+
+            os.remove(abs_path)
+            invalidate_file_caches(rel)
+            deleted.append(rel)
+
+            parent_dir = os.path.dirname(abs_path)
+            if parent_dir and parent_dir != folder:
+                _cleanup_empty_parents(parent_dir)
+        except Exception as e:
+            failed.append({"file": rel, "error": f"{e}"})
+
+    status = 200
+    if failed:
+        status = 207
+
+    return web.json_response({"ok": True, "deleted": deleted, "missing": missing, "failed": failed}, status=status)
+
 @PromptServer.instance.routes.get("/vslinx/csv_prompt_read")
 async def vslinx_csv_prompt_read(request: web.Request):
     filename = request.rel_url.query.get("filename", "")
@@ -430,6 +495,48 @@ async def vslinx_csv_prompt_list(request: web.Request):
         return web.json_response({"files": files, "dirs": dirs})
     except Exception as e:
         return web.json_response({"error": f"Failed to list files: {e}"}, status=500)
+    
+@PromptServer.instance.routes.post("/vslinx/csv_prompt_delete")
+async def vslinx_csv_prompt_delete(request: web.Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    files = (data or {}).get("files", None)
+    if not isinstance(files, list) or not files:
+        return web.json_response({"error": "No files provided"}, status=400)
+
+    folder = get_promptfiles_dir()
+
+    deleted: List[str] = []
+    failed: List[str] = []
+
+    for raw in files:
+        try:
+            rel = sanitize_prompt_relpath(str(raw))
+            abs_path = os.path.join(folder, rel)
+
+            abs_path_real = os.path.realpath(abs_path)
+            folder_real = os.path.realpath(folder)
+            if not abs_path_real.startswith(folder_real + os.sep) and abs_path_real != folder_real:
+                failed.append(rel)
+                continue
+
+            if not os.path.isfile(abs_path):
+                failed.append(rel)
+                continue
+
+            os.remove(abs_path)
+            invalidate_file_caches(rel)
+            deleted.append(rel)
+        except Exception:
+            try:
+                failed.append(str(raw))
+            except Exception:
+                failed.append("<?>")
+
+    return web.json_response({"deleted": deleted, "failed": failed})
 
 def _normalize_selected_keys(row: Dict[str, Any]) -> List[str]:
     key = row.get("key", None)

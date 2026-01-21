@@ -167,6 +167,55 @@ function hasRowForFilename(node, filename, excludeWidget = null) {
   });
 }
 
+function removeRowsUsingFiles(node, deletedFiles) {
+  const del = new Set((deletedFiles || []).map((s) => String(s ?? "")));
+  if (!del.size) return;
+
+  const widgets = getRowWidgets(node);
+  for (const w of widgets) {
+    if (w?.value?.type !== "CsvRowWidget") continue;
+    const f = String(w?.value?.file ?? "");
+    if (!f) continue;
+    if (!del.has(f)) continue;
+
+    try {
+      if (typeof w._handleRemove === "function") {
+        w._handleRemove();
+      } else {
+        const idx = (node.widgets || []).indexOf(w);
+        if (idx !== -1) (node.widgets || []).splice(idx, 1);
+      }
+    } catch (_) { }
+  }
+
+  try {
+    node.setDirtyCanvas?.(true, true);
+  } catch (_) { }
+}
+
+function removeRowsUsingFilesFromAllNodes(deletedFiles) {
+  try {
+    if (!Array.isArray(deletedFiles) || deletedFiles.length === 0) return;
+
+    const toNorm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    const normalized = deletedFiles.map(toNorm).filter(Boolean);
+    if (!normalized.length) return;
+
+    const nodes = app?.graph?._nodes;
+    if (!Array.isArray(nodes) || !nodes.length) return;
+
+    for (const n of nodes) {
+      if (!n) continue;
+      const t = String(n.type ?? n.comfyClass ?? "");
+      if (t !== NODE_NAME) continue;
+      removeRowsUsingFiles(n, normalized);
+    }
+  } catch (err) {
+    console.warn("[csv_prompt_picker] removeRowsUsingFilesFromAllNodes failed:", err);
+  }
+}
+
+
 function recomputeNodeSize(node) {
   try {
     const computed = node.computeSize?.();
@@ -718,6 +767,23 @@ function ensureSelectButton(node) {
         mode: "multi",
         onAddFiles: uploadFilesIntoFolder,
         onCreateFolder: createFolder,
+        onDeleteFiles: async (paths) => {
+          const res = await fetch("/vslinx/csv_prompt_delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ files: Array.isArray(paths) ? paths : [] }),
+          });
+
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const msg = json?.error || `Delete failed (${res.status})`;
+            throw new Error(msg);
+          }
+
+          const deleted = Array.isArray(json?.deleted) ? json.deleted : (Array.isArray(paths) ? paths : []);
+          removeRowsUsingFilesFromAllNodes(deleted);
+          return json;
+        },
         getEntries: listPromptEntries,
       });
 
