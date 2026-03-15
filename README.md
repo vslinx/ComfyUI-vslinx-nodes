@@ -79,7 +79,7 @@ his node upscales an image using a selected <b>upscale model</b> and then resize
 <img width="1420" height="602" alt="Image" src="https://github.com/user-attachments/assets/d1845c2e-0d8b-480d-8177-7799f8259b2a" />
 
 #### Load Last Generated Image
-This node loads an image from your ``output`` folder and serves as a replacement for ComfyUI's built-in **LoadImageOutput** node. A dropdown lists all images sorted by newest first, so the most recent generation is always at the top. When ``auto_refresh`` is enabled, the node automatically picks up newly generated images after each workflow execution — but only when a new file actually appeared, so your current selection stays untouched otherwise.
+This node loads an image from your ``output`` folder and serves as a replacement for ComfyUI's built-in **LoadImageOutput** node. A dropdown lists all images sorted by newest first, so the most recent generation is always at the top. When ``Auto refresh after generation`` is enabled, the node automatically picks up newly generated images after each workflow execution — but only when a new file actually appeared, so your current selection stays untouched otherwise.
 
 The node supports the **MaskEditor** (right-click → "Open in MaskEditor"). Painted masks are preserved across workflow executions, tab switches, and page reloads. If no image is available or the selected file was deleted, the node outputs a 512×512 black image to prevent blocking your workflow.
 
