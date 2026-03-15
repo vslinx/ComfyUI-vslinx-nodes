@@ -83,7 +83,7 @@ This node loads an image from your ``output`` folder and serves as a replacement
 
 The node supports the **MaskEditor** (right-click → "Open in MaskEditor"). Painted masks are preserved across workflow executions, tab switches, and page reloads. If no image is available or the selected file was deleted, the node outputs a 512×512 black image to prevent blocking your workflow.
 
-A ``include_subfolders`` property (right-click → Properties) controls whether images from subfolders inside the ``output`` directory are included in the dropdown.
+A ``include_subfolders`` property (right-click → Properties) controls whether images from subfolders inside the ``output`` directory are included in the dropdown and refresh functions.
 
 ### Boolean
 #### Boolean AND Operator
