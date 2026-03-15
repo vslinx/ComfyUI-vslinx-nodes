@@ -78,6 +78,13 @@ Note that a batch is a tensor of the same shape, if your images have different h
 his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. Minimum is 0.1 scale while the maximum is 8.0 scale.
 <img width="1420" height="602" alt="Image" src="https://github.com/user-attachments/assets/d1845c2e-0d8b-480d-8177-7799f8259b2a" />
 
+#### Load Last Generated Image
+This node loads an image from your ``output`` folder and serves as a replacement for ComfyUI's built-in **LoadImageOutput** node. A dropdown lists all images sorted by newest first, so the most recent generation is always at the top. When ``Auto refresh after generation`` is enabled, the node automatically picks up newly generated images after each workflow execution — but only when a new file actually appeared, so your current selection stays untouched otherwise.
+
+The node supports the **MaskEditor** (right-click → "Open in MaskEditor"). Painted masks are preserved across workflow executions, tab switches, and page reloads. If no image is available or the selected file was deleted, the node outputs a 512×512 black image to prevent blocking your workflow.
+
+A ``include_subfolders`` property (right-click → Properties) controls whether images from subfolders inside the ``output`` directory are included in the dropdown and refresh functions.
+
 ### Boolean
 #### Boolean AND Operator
 Provides a node with 2 boolean inputs. Outputs True only if both inputs are True. Otherwise returns False. <br>
@@ -119,6 +126,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.7.0
+- added new ``Load Last Generated Image``-Node as a replacement for ComfyUI's built-in **LoadImageOutput** node. Provides a dropdown of all images in the output folder (newest first), auto-refresh after generation, a manual refresh button, a file upload button, and full MaskEditor support with mask persistence across executions, tab switches, and page reloads. Falls back to a 512×512 black image when no image is available.
+
 ### v.1.6.1
 - added filename export for ``Load (Multiple) Images (List)`` and ``Load (Multiple) Images (Batch)`` with a node-property to also dedupe the filename to remove `` (number)`` from the name in case of a duplicate filename 
 
