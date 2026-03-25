@@ -126,6 +126,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.7.1
+- fixed ``Load Last Generated Image`` node preview getting stuck on a previously drawn mask after using the MaskEditor, then refreshing or auto-refreshing to a new image. Caused by ComfyUI frontend >=1.41 introducing a Vue-based node output store that the MaskEditor writes to; stale clipspace data in that store was overriding the node's preview on every frame. The fix clears the store entry and suppresses the Vue overlay when switching back to an output image.
+
 ### v.1.7.0
 - added new ``Load Last Generated Image``-Node as a replacement for ComfyUI's built-in **LoadImageOutput** node. Provides a dropdown of all images in the output folder (newest first), auto-refresh after generation, a manual refresh button, a file upload button, and full MaskEditor support with mask persistence across executions, tab switches, and page reloads. Falls back to a 512×512 black image when no image is available.
 

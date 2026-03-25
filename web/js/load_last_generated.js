@@ -98,6 +98,22 @@ app.registerExtension({
       }
     };
 
+    /* Clear stale MaskEditor / nodeOutputStore data so that the
+       new Vue-based frontend (>=1.41) does not override our preview.
+       - Deletes app.nodeOutputs[id] → stops onDrawBackground from
+         calling showPreview() with the old clipspace image.
+       - Sets node.hideOutputImages = true → prevents the Vue overlay
+         from rendering the stale Pinia reactive-ref entry.            */
+    const clearNodeOutputStoreEntry = (node) => {
+      try {
+        const nodeId = String(node.id);
+        if (app.nodeOutputs && nodeId in app.nodeOutputs) {
+          delete app.nodeOutputs[nodeId];
+        }
+      } catch { /* older ComfyUI versions – safe to ignore */ }
+      node.hideOutputImages = true;
+    };
+
     /* Select an output-folder image. Sets the hidden widget to
        "rel [output]" and updates node.images + preview. */
     const setSelection = (node, rel) => {
@@ -106,6 +122,7 @@ app.registerExtension({
         if (imgWidget) imgWidget.value = "";
         node.images = null;
         node.imgs = null;
+        clearNodeOutputStoreEntry(node);
         node.setDirtyCanvas(true, true);
         return;
       }
@@ -114,12 +131,14 @@ app.registerExtension({
       const filename = parts.pop();
       const subfolder = parts.join("/");
       node.images = [{ filename, subfolder, type: "output" }];
+      clearNodeOutputStoreEntry(node);
       loadPreview(node, rel, "output");
     };
 
     /* Called when the MaskEditor saves a painted mask to input/clipspace.
        The MaskEditor already updated imgWidget.value to the clipspace path.
-       We just need to update node.images and load the preview. */
+       We just need to update node.images and load the preview.
+       Allow the store / Vue overlay to handle the MaskEditor preview. */
     const onMaskEditorSave = (node, value) => {
       const stripped = stripAnnotation(value);
       if (!stripped.startsWith("clipspace/")) return;
@@ -128,6 +147,7 @@ app.registerExtension({
       const fname = parts.pop();
       const subfolder = parts.join("/");
       node.images = [{ filename: fname, subfolder, type: "input" }];
+      node.hideOutputImages = false;
       loadPreview(node, stripped, "input");
     };
 
@@ -375,6 +395,13 @@ app.registerExtension({
 
         /* Reconstruct node.images for MaskEditor */
         reconstructNodeImages(this);
+
+        /* For output images, clear any stale MaskEditor data from the
+           nodeOutputStore so onDrawBackground doesn't override our preview.
+           For clipspace images, let the store/Vue handle the preview. */
+        if (!stripped.startsWith("clipspace/")) {
+          clearNodeOutputStoreEntry(this);
+        }
 
         /* Load preview from the hidden widget (works for both output and clipspace) */
         loadPreviewFromWidget(this);
