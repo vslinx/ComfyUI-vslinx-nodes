@@ -1,6 +1,14 @@
 import importlib
-from .py import preview_routes
 
+from .py import preview_routes
+from .nodes.combo_type_fix import apply_combo_type_fix, register_routes
+
+# Apply the combo type fix at import time (before any prompt validation).
+# The fix is togglable at runtime via ComfyUI Settings > vsLinx.
+apply_combo_type_fix()
+register_routes()
+
+# --- Node registration ---
 node_list = [
     "multi_image_select",
     "boolean_operator",
