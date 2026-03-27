@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk ls:*)",
+      "Bash(rtk grep:*)",
+      "Bash(rtk head:*)",
+      "Bash(find '/c/Users/linkh/Desktop/Neuer Ordner/ComfyUI/venv/Lib/site-packages/comfyui_frontend_package' -name *.json -type f)",
+      "Bash(rtk git:*)",
+      "Bash(tr ';' '\\\\n')",
+      "Bash(grep -l \"openMaskEditor\\\\|saveMask\\\\|mask.*editor\" *.js)",
+      "Bash(for f:*)",
+      "Bash(do if:*)",
+      "Bash(then echo:*)",
+      "Read(//c/Users/linkh/Desktop/Neuer Ordner/ComfyUI/custom_nodes/ComfyUI-vslinx-nodes.git/**)",
+      "Bash(fi)",
+      "Bash(done)"
+    ]
+  }
+}
