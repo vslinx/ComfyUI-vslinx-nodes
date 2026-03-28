@@ -13,6 +13,10 @@ Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-s
   ```
 
 ## Settings
+#### Fix combo type mismatches between custom nodes
+Is enabled by default and prevents "Return type mismatch between linked nodes" errors that occur when custom nodes (e.g. RES4LYF) extend combo lists like schedulers with additional entries. When a mismatch is detected, the fix automatically corrects the expected list to match the input list of the receiving node — this is universal, works across subgraphs and all custom nodes, and does nothing when there is no mismatch. A message is logged to the console whenever the fix is applied.
+Disable if you experience unexpected behavior.
+
 #### Show hover previews in all model dropdowns
 When enabled, this feature shows a preview for the model you’re hovering with your mouse.  
 It works across **all model / LoRA loaders** and supports **`.safetensors`**, **`.ckpt`**, **`.pt`**, and **`.gguf`** files located in these folders:
