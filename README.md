@@ -82,6 +82,10 @@ Note that a batch is a tensor of the same shape, if your images have different h
 his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. Minimum is 0.1 scale while the maximum is 8.0 scale.
 <img width="1420" height="602" alt="Image" src="https://github.com/user-attachments/assets/d1845c2e-0d8b-480d-8177-7799f8259b2a" />
 
+#### Image to Pixel Art
+This node converts an image into <b>true pixel art</b> by downscaling it to a discrete low-resolution pixel grid, quantizing colors to a limited palette, and scaling back up with nearest-neighbor so every pixel block is hard-edged and solid with no blending or anti-aliasing.
+<img width="1310" height="557" alt="Image" src="https://github.com/user-attachments/assets/7505fe22-0458-43cf-89d1-c040f2316261" />
+
 #### Load Last Generated Image
 This node loads an image from your ``output`` folder and serves as a replacement for ComfyUI's built-in **LoadImageOutput** node. A dropdown lists all images sorted by newest first, so the most recent generation is always at the top. When ``Auto refresh after generation`` is enabled, the node automatically picks up newly generated images after each workflow execution — but only when a new file actually appeared, so your current selection stays untouched otherwise.
 
@@ -130,6 +134,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.7.3
+- added new ``Image to Pixel Art``-Node that converts images to true pixel art via downscaling to a discrete pixel grid, color quantization with fixed historical palettes (GameBoy, Pico-8, CGA, C64, NES) or auto palette, and optional Floyd-Steinberg or ordered Bayer dithering
+
 ### v.1.7.2
 - introduced new setting that is activated by default and fixes global scheduler issues introduced by nodes like RES4LYF that overwrite global scheduler lists which does not work well with subgraphs or other custom nodes, if there's a mismatch this fix will automatically correct the expected list with the input list of the node and prevent erros
 
