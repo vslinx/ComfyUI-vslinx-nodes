@@ -17,7 +17,8 @@ node_list = [
     "lora_save_helper",
     "impact_multiline_wildcard_text",
     "upscale_by_factor_with_model",
-    "load_last_generated"
+    "load_last_generated",
+    "image_to_pixel_art",
 ]
 
 NODE_CLASS_MAPPINGS = {}
