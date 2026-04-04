@@ -107,16 +107,6 @@ function readNodeBooleanWidget(node) {
   return null;
 }
 
-function hasAnyIncomingLinks(node) {
-  const ins = node.inputs || [];
-  for (const pin of ins) {
-    if (!pin) continue;
-    const lid = pin.link ?? (pin.links?.length ? pin.links[0] : null);
-    if (lid != null) return true;
-  }
-  return false;
-}
-
 function findWidgetForInput(node, inputIndex) {
   const widgets = node.widgets || [];
   if (!widgets.length) return null;
@@ -180,22 +170,31 @@ function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
   if (seen.has(key)) return null;
   seen.add(key);
 
+  // 1. Known vsLinx logic nodes (AND / OR / Flip)
   const evalFn = BOOLEAN_NODE_EVAL[src.type];
   if (typeof evalFn === "function") {
     const v = evalFn(src, link.origin_slot, (g, lid) => resolveBooleanAtLink(g, lid, seen));
     if (v != null) return !!v;
   }
 
+  // 2. Unknown node type: recursively walk its own inputs.
+  //    This handles any depth of pass-through / relay nodes.
+  //    Use a fresh copy of `seen` per branch so sibling inputs don't
+  //    block each other, but cycles within a single path are still caught.
+  for (const inp of (src.inputs || [])) {
+    const inLinkId = inp.link ?? (inp.links?.[0] ?? null);
+    if (inLinkId == null) continue;
+    const v = resolveBooleanAtLink(graph, inLinkId, new Set(seen));
+    if (v != null) return !!v;
+  }
+
+  // 3. Widget value — covers primitive nodes and any node whose upstream
+  //    chain couldn't be resolved but has a local toggle/checkbox.
+  const widgetVal = readNodeBooleanWidget(src);
+  if (widgetVal != null) return !!widgetVal;
+
+  // 4. Slot value as last resort
   const outSlot = src.outputs?.[link.origin_slot];
-  if (outSlot && typeof outSlot.__vl_bool_preview === "boolean") {
-    return !!outSlot.__vl_bool_preview;
-  }
-
-  if (!hasAnyIncomingLinks(src)) {
-    const widgetVal = readNodeBooleanWidget(src);
-    if (widgetVal != null) return !!widgetVal;
-  }
-
   if (outSlot && typeof outSlot.value === "boolean") return !!outSlot.value;
 
   return null;
@@ -265,7 +264,7 @@ app.registerExtension({
     };
 
     const onConnectionsChange = nodeType.prototype.onConnectionsChange;
-    nodeType.prototype.onConnectionsChange = function (type, slotIndex, isConnected, linkInfo, ioSlot) {
+    nodeType.prototype.onConnectionsChange = function (type, _slotIndex, isConnected) {
       const r = onConnectionsChange?.apply(this, arguments);
 
       scheduleType(this);
