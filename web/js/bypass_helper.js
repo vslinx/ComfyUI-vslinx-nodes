@@ -71,6 +71,25 @@ function setDownstreamMode(node, modeWhenTrue, on) {
   for (const lid of links) {
     const link = node.graph?.links?.[lid];
     if (!link) continue;
+
+    // Subgraph output boundary: target_id < 0 means the link exits the subgraph.
+    // target_slot is the index of the outer group node's output slot — follow
+    // that slot's links in the outer graph to reach the real downstream nodes.
+    if (link.target_id < 0) {
+      const parent = findParentNode(node.graph);
+      if (!parent) continue;
+      const outerOut = parent.node.outputs?.[link.target_slot];
+      for (const outerLid of (outerOut?.links || [])) {
+        const outerLink = parent.graph?.links?.[outerLid];
+        if (!outerLink) continue;
+        const target = parent.graph.getNodeById(outerLink.target_id);
+        if (!target) continue;
+        target.mode = on ? modeWhenTrue : MODE_ALWAYS;
+        if (typeof target.setDirtyCanvas === "function") target.setDirtyCanvas(true, true);
+      }
+      continue;
+    }
+
     const target = node.graph.getNodeById(link.target_id);
     if (!target) continue;
     target.mode = on ? modeWhenTrue : MODE_ALWAYS;
@@ -160,9 +179,40 @@ const BOOLEAN_NODE_EVAL = {
 
 };
 
+// Find the outer group node that contains the given subgraph.
+// Tries a back-reference first, then falls back to a root search.
+function findParentNode(subgraph) {
+  if (subgraph._subgraph_node) {
+    const n = subgraph._subgraph_node;
+    return { node: n, graph: n.graph };
+  }
+  function search(g) {
+    for (const n of (g._nodes || [])) {
+      if (n.subgraph === subgraph) return { node: n, graph: g };
+      if (n.subgraph) {
+        const found = search(n.subgraph);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  return search(app.graph);
+}
+
 function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
   const link = graph?.links?.[linkId];
   if (!link) return null;
+
+  // Subgraph boundary: ComfyUI uses a negative origin_id (e.g. -10) on links
+  // that come from the outer graph. origin_slot is the outer node's input index.
+  if (link.origin_id < 0) {
+    const parent = findParentNode(graph);
+    if (!parent) return null;
+    const outerInput = parent.node.inputs?.[link.origin_slot];
+    if (!outerInput || outerInput.link == null) return null;
+    return resolveBooleanAtLink(parent.graph, outerInput.link, new Set(seen));
+  }
+
   const src = graph.getNodeById(link.origin_id);
   if (!src) return null;
 
