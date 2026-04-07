@@ -583,6 +583,29 @@ class BookmarkPanel {
     this._visible = !this._visible;
     this._el.querySelector(".vsl-bm-panel-inner").style.display = this._visible ? "" : "none";
     this._icon.innerHTML = this._visible ? "&#x276F;" : "&#x276E;";
+    this._saveCollapsed();
+  }
+
+  // Load panel UI state from the first bookmark node's properties.
+  loadCollapsed(node) {
+    const src = node || getBookmarkNodes()[0];
+    if (!src) return;
+    const saved = src.properties?.collapsedSections;
+    if (Array.isArray(saved)) this._collapsed = new Set(saved);
+    if (typeof src.properties?.panelVisible === "boolean") {
+      this._visible = src.properties.panelVisible;
+      this._el.querySelector(".vsl-bm-panel-inner").style.display = this._visible ? "" : "none";
+      this._icon.innerHTML = this._visible ? "&#x276F;" : "&#x276E;";
+    }
+  }
+
+  // Persist current panel UI state to all bookmark nodes so it's saved with the workflow.
+  _saveCollapsed() {
+    for (const node of getBookmarkNodes()) {
+      node.properties = node.properties || {};
+      node.properties.collapsedSections = [...this._collapsed];
+      node.properties.panelVisible = this._visible;
+    }
   }
 
   update() {
@@ -625,6 +648,7 @@ class BookmarkPanel {
         el.title = sectionCollapsed ? "Click to expand" : "Click to collapse";
         el.addEventListener("click", () => {
           this._collapsed.has(key) ? this._collapsed.delete(key) : this._collapsed.add(key);
+          this._saveCollapsed();
           this.update();
         });
         this._list.appendChild(el);
@@ -1057,7 +1081,11 @@ app.registerExtension({
     const origConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function (...args) {
       const r = origConfigure?.apply(this, args);
-      setTimeout(() => bookmarkPanel?.update(), 50);
+      const node = this;
+      setTimeout(() => {
+        bookmarkPanel?.loadCollapsed(node);
+        bookmarkPanel?.update();
+      }, 50);
       return r;
     };
 
