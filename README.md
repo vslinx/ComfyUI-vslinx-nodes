@@ -112,6 +112,13 @@ This node accepts any input type and forwards it unchanged. Its pass-through beh
 #### Forward/Mute on Boolean (Any)
 This node works the same way as ``Forward/Bypass on Boolean (Any)``, but instead of bypassing the connected nodes it mutes them. The mute state can be controlled with the built-in boolean switch or by linking an external boolean, and changes are applied instantly in the UI.
 
+#### Group Bookmarks
+A UI-only node that adds a collapsible side panel on the right edge of the ComfyUI canvas, listing bookmarked workflow groups. Clicking a bookmark entry centers the canvas on that group and zooms to fit it into view.
+
+Click **"Manage Bookmarks"** on the node to open the bookmark manager. The left column shows all groups present in the workflow; clicking one adds or removes it from your active bookmarks on the right. Bookmarks can be organized into named, collapsible **sections** using the **"+ Add Section"** button - drag and drop items in the right column to reorder them or move groups into or out of sections. Sections themselves can also be reordered by dragging.
+
+The side panel can be toggled open and closed via an arrow tab on the right edge of the canvas. Panel visibility, section collapsed state, and the full bookmark list are persisted with the workflow.
+
 #### Power Lora Loader to Prompt (Image Saver)
 This node acts as a bridge between the **Power Lora Loader (rgthree)** node by [rgthree](https://github.com/rgthree/rgthree-comfy) and the **Image Saver** node by [alexopus](https://github.com/alexopus/ComfyUI-Image-Saver).<br>
 You can either **connect a model**, or **provide the id**  or **title** of a `Power Lora Loader (rgthree)` node, along with your prompt as a text string. The node will then **append the LoRAs** in the correct format for the Image Saver node. When you pass this new string to Image Saver as the **positive prompt**, it will save the hashes of the LoRAs for Civitai and other AI platforms while removing the LoRAs from the final string, so your prompt doesn’t look messy.
