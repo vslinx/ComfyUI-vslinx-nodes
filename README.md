@@ -134,6 +134,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.8.0
+- added new ``Group Bookmarks``-Node in the ``vsLinx/utility`` group. A UI-only node that adds a collapsible side panel on the right edge of the ComfyUI canvas listing bookmarked workflow groups. Clicking a bookmark entry centers the canvas on that group and zooms to fit it into view. Groups can be organized into named, collapsible sections inside the panel. Section collapsed state and panel visibility are persisted with the workflow.
+
 ### v.1.7.4
 - added full subgraph support to ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)``: boolean values passed in from outside a subgraph are now correctly resolved inside it at any nesting depth, and nodes outside the subgraph connected to its output are bypassed/muted accordingly
 
