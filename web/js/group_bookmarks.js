@@ -480,7 +480,7 @@ function openBookmarkModal(node) {
 
     const icon = document.createElement("span");
     icon.className = "vsl-bm-section-icon";
-    icon.textContent = "§";
+    icon.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="display:block"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.764c.415 0 .813.165 1.107.46L8.742 3.8a.5.5 0 0 0 .356.147H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/></svg>`;
 
     const labelEl = document.createElement("span");
     labelEl.className = "vsl-bm-section-label";
@@ -964,9 +964,11 @@ const CSS = `
 .vsl-bm-item-remove:hover { background: rgba(255,80,80,0.18); color: #ff7070; }
 
 .vsl-bm-section-icon {
-  flex-shrink: 0; font-size: 11px;
+  flex-shrink: 0;
+  width: 12px; height: 12px;
   color: rgba(74,158,255,0.6);
   pointer-events: none; user-select: none;
+  display: flex; align-items: center;
 }
 .vsl-bm-section-label {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1073,6 +1075,10 @@ app.registerExtension({
       const r = origCreated?.apply(this, arguments);
       this.properties = this.properties || {};
       if (!Array.isArray(this.properties.bookmarks)) this.properties.bookmarks = [];
+      const spacer = this.addWidget("button", "_spacer_", null, () => {});
+      spacer.draw = () => {};
+      spacer.computeSize = () => [0, 8];
+      spacer.serialize = false;
       this.addWidget("button", "Manage Bookmarks", null, () => openBookmarkModal(this));
       setTimeout(() => bookmarkPanel?.update(), 50);
       return r;
