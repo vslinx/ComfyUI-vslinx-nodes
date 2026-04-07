@@ -191,7 +191,7 @@ def _add_bayer_noise_auto(arr: np.ndarray, bayer: np.ndarray, num_colors: int) -
 # Node
 # ---------------------------------------------------------------------------
 
-class ImageToPixelArt:
+class vsLinx_ImageToPixelArt:
     DESCRIPTION = (
         "Converts an image to true pixel art: downscales to a discrete pixel grid, "
         "quantizes to a limited color palette, and applies optional dithering. "
@@ -326,9 +326,5 @@ class ImageToPixelArt:
 # Registration
 # ---------------------------------------------------------------------------
 
-NODE_CLASS_MAPPINGS = {
-    "VsLinxImageToPixelArt": ImageToPixelArt,
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "VsLinxImageToPixelArt": "Image to Pixel Art",
-}
+NODE_CLASS_MAPPINGS = {"vsLinx_ImageToPixelArt": vsLinx_ImageToPixelArt}
+NODE_DISPLAY_NAME_MAPPINGS = {"vsLinx_ImageToPixelArt": "Image to Pixel Art"}

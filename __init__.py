@@ -19,6 +19,7 @@ node_list = [
     "upscale_by_factor_with_model",
     "load_last_generated",
     "image_to_pixel_art",
+    "group_bookmarks",
 ]
 
 NODE_CLASS_MAPPINGS = {}
