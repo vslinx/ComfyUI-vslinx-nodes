@@ -1,5 +1,3 @@
-// ComfyUI/web/extensions/impact_multiline_wildcard_text.js
-
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 
@@ -32,7 +30,7 @@ async function loadWildcards() {
     return wildcards_list;
 }
 
-function insertWildcardIntoText(node, wildcard) {
+function insertWildcardIntoText(node, wildcard, dropdown) {
     if (!wildcard) return;
 
     const textWidget =
@@ -54,6 +52,10 @@ function insertWildcardIntoText(node, wildcard) {
         node.widgets_values[0] = newText;
     }
 
+    if (dropdown) {
+        dropdown.value = "Select wildcard";
+    }
+
     app.canvas.setDirty(true);
 }
 
@@ -73,7 +75,7 @@ function setupWildcardDropdown(node) {
         "Select wildcard",
         (value) => {
             if (!value || value === "Select wildcard") return;
-            insertWildcardIntoText(node, value);
+            insertWildcardIntoText(node, value, dropdown);
         },
         {
             values: ["Select wildcard"], 
