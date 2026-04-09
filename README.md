@@ -141,6 +141,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.8.1
 - fixed ``(Impact-Pack) Multiline Wildcard Text`` wildcard dropdown not resetting after selection, which could make users think only one wildcard could be added per session
 
 ### v.1.8.0
