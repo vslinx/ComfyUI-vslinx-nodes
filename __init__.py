@@ -20,6 +20,7 @@ node_list = [
     "load_last_generated",
     "image_to_pixel_art",
     "group_bookmarks",
+    "pipe_utils",
 ]
 
 NODE_CLASS_MAPPINGS = {}
