@@ -147,6 +147,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.9.1
+- ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` are now pipe-aware: bypass/mute correctly propagates through ``Any to Pipe`` → ``Pipe to Any`` to the real downstream nodes, and boolean values routed through a pipe are resolved at the correct slot index instead of scanning all slots
+
 ### v.1.9.0
 - added new ``Any to Pipe``-Node in the ``vsLinx/utility`` group. Packs up to 5 values of any type into a single pipe connection to reduce visual clutter in large workflows.
 - added new ``Pipe to Any``-Node in the ``vsLinx/utility`` group. Unpacks a pipe connection produced by ``Any to Pipe`` back into up to 5 individual outputs.

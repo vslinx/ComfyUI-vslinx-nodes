@@ -64,6 +64,30 @@ function scheduleType(node) {
   node.__vl_type_t = setTimeout(() => applyType(node, inferType(node)), 30);
 }
 
+// When the bypass node's output feeds into an AnyToPipe slot, follow the pipe
+// through to PipeToAny and apply the mode to its real downstream nodes instead
+// of setting it on the AnyToPipe node itself.
+function applyModeViaPipe(anyToPipeNode, slotIndex, graph, modeWhenTrue, on) {
+  const pipeOut = anyToPipeNode.outputs?.[0];
+  if (!pipeOut) return;
+  for (const lid of (pipeOut.links || [])) {
+    const link = graph?.links?.[lid];
+    if (!link || link.target_id < 0) continue;
+    const pipeToAny = graph.getNodeById(link.target_id);
+    if (!pipeToAny || pipeToAny.type !== "vsLinx_PipeToAny") continue;
+    const outSlot = pipeToAny.outputs?.[slotIndex];
+    if (!outSlot) continue;
+    for (const outLid of (outSlot.links || [])) {
+      const outLink = graph?.links?.[outLid];
+      if (!outLink || outLink.target_id < 0) continue;
+      const target = graph.getNodeById(outLink.target_id);
+      if (!target) continue;
+      target.mode = on ? modeWhenTrue : MODE_ALWAYS;
+      if (typeof target.setDirtyCanvas === "function") target.setDirtyCanvas(true, true);
+    }
+  }
+}
+
 function setDownstreamMode(node, modeWhenTrue, on) {
   if (!node.outputs?.[0]) return;
   const out = node.outputs[0];
@@ -92,6 +116,15 @@ function setDownstreamMode(node, modeWhenTrue, on) {
 
     const target = node.graph.getNodeById(link.target_id);
     if (!target) continue;
+
+    // Pipe transparency: if the bypass node's output lands on an AnyToPipe slot,
+    // skip setting mode on AnyToPipe itself and instead apply it to the nodes
+    // downstream of the corresponding PipeToAny output slot.
+    if (target.type === "vsLinx_AnyToPipe") {
+      applyModeViaPipe(target, link.target_slot, node.graph, modeWhenTrue, on);
+      continue;
+    }
+
     target.mode = on ? modeWhenTrue : MODE_ALWAYS;
     if (typeof target.setDirtyCanvas === "function") target.setDirtyCanvas(true, true);
   }
@@ -158,6 +191,20 @@ function readBooleanInputValue(node, idx, resolveUpstream) {
 }
 
 const BOOLEAN_NODE_EVAL = {
+  // When a boolean travels through a pipe (AnyToPipe → PipeToAny), resolve it
+  // at the exact slot the link came from rather than scanning all 5 slots blindly.
+  "vsLinx_PipeToAny"(node, originSlot, resolveUpstream) {
+    const pipeLinkId = getFirstIncomingLinkId(node, 0); // pipe is always input[0]
+    if (pipeLinkId == null) return null;
+    const pipeLink = node.graph?.links?.[pipeLinkId];
+    if (!pipeLink) return null;
+    const anyToPipe = node.graph?.getNodeById(pipeLink.origin_id);
+    if (!anyToPipe || anyToPipe.type !== "vsLinx_AnyToPipe") return null;
+    // originSlot 0-4 maps 1:1 to AnyToPipe's input slots 0-4 (slot_1..slot_5)
+    const slotLinkId = getFirstIncomingLinkId(anyToPipe, originSlot);
+    if (slotLinkId == null) return null;
+    return resolveUpstream(node.graph, slotLinkId);
+  },
   "vsLinx_BooleanFlip"(node, originSlot, resolveUpstream) {
     const inLink = getFirstIncomingLinkId(node, 0);
     if (inLink == null) return null;
