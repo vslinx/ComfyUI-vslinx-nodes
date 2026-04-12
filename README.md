@@ -125,12 +125,6 @@ This node packs up to 5 values of any type into a single pipe connection. All sl
 #### Pipe to Any
 Unpacks a pipe connection produced by ``Any to Pipe`` back into up to 5 individual outputs. Slots that were left unconnected on the packing end are output as ``None``. Connect only the outputs that were actually packed on the sending end.
 
-#### Any to Pipe
-This node packs up to 5 values of any type into a single pipe connection. All slots are optional — leave any unconnected and only use the ones you need. Slot positions are preserved, so slot_1 in always comes out as slot_1 in the receiving ``Pipe to Any`` node. Useful for reducing visual clutter in large workflows by bundling multiple unrelated values into a single wire that can be routed across the canvas and unpacked later.
-
-#### Pipe to Any
-Unpacks a pipe connection produced by ``Any to Pipe`` back into up to 5 individual outputs. Slots that were left unconnected on the packing end are output as ``None``. Connect only the outputs that were actually packed on the sending end.
-
 #### Power Lora Loader to Prompt (Image Saver)
 This node acts as a bridge between the **Power Lora Loader (rgthree)** node by [rgthree](https://github.com/rgthree/rgthree-comfy) and the **Image Saver** node by [alexopus](https://github.com/alexopus/ComfyUI-Image-Saver).<br>
 You can either **connect a model**, or **provide the id**  or **title** of a `Power Lora Loader (rgthree)` node, along with your prompt as a text string. The node will then **append the LoRAs** in the correct format for the Image Saver node. When you pass this new string to Image Saver as the **positive prompt**, it will save the hashes of the LoRAs for Civitai and other AI platforms while removing the LoRAs from the final string, so your prompt doesn’t look messy.
