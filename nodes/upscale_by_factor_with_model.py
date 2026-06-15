@@ -4,7 +4,7 @@ import comfy.utils
 
 
 class VSLinx_UpscaleByFactorWithModel:
-    upscale_methods = ["nearest-exact", "bilinear", "area"]
+    upscale_methods = ["nearest-exact", "bilinear", "area", "lanczos"]
 
     @classmethod
     def INPUT_TYPES(cls):
