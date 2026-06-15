@@ -132,7 +132,8 @@ class VSLinx_LoadSelectedImagesList:
             selected_paths = kwargs.get("selected_paths", "")
 
         rels = _parse_paths(selected_paths)
-        seen = set(); rels = [r for r in rels if not (r in seen or seen.add(r))]
+        seen = set()
+        rels = [r for r in rels if not (r in seen or seen.add(r))]
 
         if not rels:
             _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (List)")
@@ -196,7 +197,8 @@ class VSLinx_LoadSelectedImagesBatch:
             selected_paths = kwargs.get("selected_paths", "")
 
         rels = _parse_paths(selected_paths)
-        seen = set(); rels = [r for r in rels if not (r in seen or seen.add(r))]
+        seen = set()
+        rels = [r for r in rels if not (r in seen or seen.add(r))]
 
         if not rels:
             _fail_if_needed(0, [], fail_if_empty, "Load (Multiple) Images (Batch)")
