@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-vslinx-nodes"
 description = "Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-select dialog as a batch or list; load last generated image from the output folder with auto-refresh after generation; fit an image inside a mask’s bounding box for compositing poses, objects, or decals; convert images to pixel art with retro palettes (GameBoy, CGA, NES, Pico-8); upscale to any exact scale factor using an upscale model; boolean AND/OR/flip plus bypass or mute nodes on a boolean for easy workflow branching; multiline wildcard text input with dropdown for Impact-Pack; and append LoRA info from rgthree Power LoRA Loader into image metadata. Also includes settings to show hover previews for all models & LoRAs across all model loaders — compatible with rgthree’s subdirectory view — and a fix (on by default) for “Return type mismatch” errors caused by custom nodes like RES4LYF that extend combo lists such as schedulers."
-version = "1.9.1"
+version = "1.10.0"
 license = { file = "LICENSE" }
 
 [project.urls]

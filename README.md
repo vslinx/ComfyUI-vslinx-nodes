@@ -79,7 +79,7 @@ Note that a batch is a tensor of the same shape, if your images have different h
 **Using a batch always implies using uniform dimensions!**
 
 #### Upscale by Factor (With Model)
-his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. Minimum is 0.1 scale while the maximum is 8.0 scale.
+his node upscales an image using a selected <b>upscale model</b> and then resizes the result to a target scale factor. <b>Upscale models typically operate at a fixed scale (e.g. 2× or 4×).</b> This node first runs the model at its native scale, then applies a final resize step to match your requested factor. The final resize step supports the ``nearest-exact``, ``bilinear``, ``area`` and ``lanczos`` methods. Minimum is 0.1 scale while the maximum is 8.0 scale.
 <img width="1420" height="602" alt="Image" src="https://github.com/user-attachments/assets/d1845c2e-0d8b-480d-8177-7799f8259b2a" />
 
 #### Image to Pixel Art
@@ -131,6 +131,26 @@ You can either **connect a model**, or **provide the id**  or **title** of a `Po
 
 <img width="1766" height="498" alt="Image" src="https://github.com/user-attachments/assets/cb1d76a7-d638-4573-950e-4ae371d428be" />
 
+### Detailer
+#### (Impact-Pack) Interactive Detailer
+A clone of the Impact-Pack **FaceDetailer** node **without the wildcard field**. Instead of writing fragile SEGS-wildcard syntax up front, the workflow **pauses** when the detector finds segments and a **dialog pops up** so you can write a prompt for each detected segment individually before detailing continues.
+
+**Requires [ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack).** This node is only registered when Impact-Pack is installed, so all other vsLinx nodes keep working without it. It can also be found in the node search under terms like ``Guided Detailer``, ``Face Detailer`` or ``Interactive Detailer``.
+
+The dialog shows the full image with a numbered box on every detected segment, plus a crop preview and its own prompt textfield per segment:
+
+<img width="883" height="902" alt="Image" src="https://github.com/user-attachments/assets/5185485e-4efa-4474-b81a-c813ffb83d38" />
+
+How the per-segment prompt fields behave:
+- **Empty field** → the segment is detailed with the node's base ``positive`` conditioning (identical to FaceDetailer without a wildcard).
+- **Any text** → the text is encoded with the connected ``clip`` and **replaces** the positive conditioning for that segment only. Impact's ``<lora:name:weight>`` syntax is supported and applies the LoRA to that segment only.
+- **``[CONCAT]`` prefix** → the text is concatenated to the base positive conditioning instead of replacing it.
+- **``[SKIP]``** → the segment is left completely untouched.
+
+The dialog remembers your last prompts per node (browser localStorage) and prefills them on the next run, ``Ctrl+Enter`` confirms, and clicking a box in the overview focuses its textfield. If the page is reloaded while the workflow is waiting, the dialog is restored automatically.
+
+In addition to the standard FaceDetailer parameters, the node adds ``segment_order`` (the order segments are numbered and processed in), ``timeout_sec`` + ``on_timeout`` (how long to wait for the dialog and what to do if it's never answered — important when running headless via the API so the queue doesn't hang), and ``always_ask`` (re-ask on every run vs. reuse the cached result when inputs are unchanged). It also outputs a ``used_prompts`` string summarizing the prompt used per segment, handy for image-saver metadata.
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
@@ -147,6 +167,10 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.10.0
+- added new ``(Impact-Pack) Interactive Detailer``-Node in the ``vsLinx/detailer`` group. A FaceDetailer clone that, instead of a wildcard field, pauses the workflow and pops up a dialog to enter a prompt per detected segment (empty = base prompt, ``[CONCAT]`` to append, ``[SKIP]`` to leave untouched), then details each segment with its own prompt. Requires ComfyUI-Impact-Pack.
+- added ``lanczos`` as an additional ``upscale_method`` option to the ``Upscale by Factor (With Model)``-Node. Lanczos gives the sharpest, highest-quality resize but runs on the CPU (via PIL), so it is somewhat slower than the other methods.
+
 ### v.1.9.1
 - ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` are now pipe-aware: bypass/mute correctly propagates through ``Any to Pipe`` → ``Pipe to Any`` to the real downstream nodes, and boolean values routed through a pipe are resolved at the correct slot index instead of scanning all slots
 
