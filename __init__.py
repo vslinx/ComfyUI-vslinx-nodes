@@ -21,6 +21,7 @@ node_list = [
     "image_to_pixel_art",
     "group_bookmarks",
     "pipe_utils",
+    "vae_decode_batched",
 ]
 
 NODE_CLASS_MAPPINGS = {}

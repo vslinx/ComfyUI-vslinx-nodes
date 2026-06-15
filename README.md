@@ -151,6 +151,15 @@ The dialog remembers your last prompts per node (browser localStorage) and prefi
 
 In addition to the standard FaceDetailer parameters, the node adds ``segment_order`` (the order segments are numbered and processed in), ``timeout_sec`` + ``on_timeout`` (how long to wait for the dialog and what to do if it's never answered — important when running headless via the API so the queue doesn't hang), and ``always_ask`` (re-ask on every run vs. reuse the cached result when inputs are unchanged). It also outputs a ``used_prompts`` string summarizing the prompt used per segment, handy for image-saver metadata.
 
+### Latent
+#### VAE Decode (Batched)
+A drop-in replacement for ComfyUI's built-in **VAE Decode** node that works and behaves exactly the same, but adds a single extra ``batch_size`` field. By default ComfyUI decodes the entire latent batch in one VAE call; this node lets you decode only ``batch_size`` latents at a time (default ``1``, i.e. one image at a time) and concatenates the results back into the same output batch.
+
+Decoding fewer latents per call **lowers peak VRAM** and on many setups **speeds up generation**, because a large single decode can push ComfyUI into a slower tiled/low-VRAM fallback or spill VRAM. Setting ``batch_size`` to a value equal to or greater than the number of latents behaves identically to the built-in node (a single decode), so there's no downside to leaving it in your workflow.
+
+#### VAE Decode Tiled (Batched)
+The same idea applied to ComfyUI's **VAE Decode (Tiled)** node: all original fields (``tile_size``, ``overlap``, ``temporal_size``, ``temporal_overlap``) are kept unchanged and a ``batch_size`` field is added on top. ``batch_size`` controls *how many latents* are decoded per call, while the tiling fields control how each individual latent is split spatially — the two are independent and combine freely.
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
@@ -168,6 +177,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 
 ## Changelog
 ### v.1.10.0
+- added new ``VAE Decode (Batched)`` and ``VAE Decode Tiled (Batched)`` nodes in the ``vsLinx/latent`` group. They work exactly like ComfyUI's built-in VAE Decode / VAE Decode (Tiled) but add a ``batch_size`` field that controls how many latents are decoded by the VAE at once (default ``1``). Decoding fewer at a time lowers peak VRAM and can speed up generation; values >= the batch size behave identically to the built-in nodes.
 - added new ``(Impact-Pack) Interactive Detailer``-Node in the ``vsLinx/detailer`` group. A FaceDetailer clone that, instead of a wildcard field, pauses the workflow and pops up a dialog to enter a prompt per detected segment (empty = base prompt, ``[CONCAT]`` to append, ``[SKIP]`` to leave untouched), then details each segment with its own prompt. Requires ComfyUI-Impact-Pack.
 - added ``lanczos`` as an additional ``upscale_method`` option to the ``Upscale by Factor (With Model)``-Node. Lanczos gives the sharpest, highest-quality resize but runs on the CPU (via PIL), so it is somewhat slower than the other methods.
 
