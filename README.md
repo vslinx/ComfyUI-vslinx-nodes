@@ -112,6 +112,15 @@ This node accepts any input type and forwards it unchanged. Its pass-through beh
 #### Forward/Mute on Boolean (Any)
 This node works the same way as ``Forward/Bypass on Boolean (Any)``, but instead of bypassing the connected nodes it mutes them. The mute state can be controlled with the built-in boolean switch or by linking an external boolean, and changes are applied instantly in the UI.
 
+#### Forward/Bypass-Mute on State (Any)
+Like the two nodes above, this node forwards any value unchanged, but instead of a boolean it **mirrors the bypass/mute state of another node** onto the directly connected downstream node(s). Use it when you don't have a boolean to drive the decision, but you do have another node whose state should determine it.
+
+Connect the node you want to watch to the **``trigger``** input (its value is never used — only the link matters). The downstream node(s) then follow that node's state: **bypassed → bypassed**, **muted → muted**, **normal → normal**. When ``trigger`` is left unconnected, the downstream node(s) run normally and the node is a plain pass-through. As with the other forward nodes, mirroring is applied instantly in the UI and is pipe-aware (follows ``Any to Pipe`` → ``Pipe to Any``).
+
+Two toggles fine-tune the behavior:
+- **``Ignore subgraph boundary``** - when enabled, the trigger lookup crosses subgraph boundaries (both inbound and outbound) until it reaches a real node, instead of stopping at the boundary. When disabled, only the node directly wired into ``trigger`` in the same graph is read.
+- **``Mirror this node's own bypass/mute``** - when enabled, this node also mirrors its **own** bypass/mute state onto the downstream node(s), taking precedence over the trigger. Handy for chaining, so bypassing/muting this node propagates that state onward.
+
 #### Group Bookmarks
 A UI-only node that adds a collapsible side panel on the right edge of the ComfyUI canvas, listing bookmarked workflow groups. Clicking a bookmark entry centers the canvas on that group and zooms to fit it into view.
 
@@ -177,6 +186,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 
 ## Changelog
 ### v.1.10.0
+- added new ``Forward/Bypass-Mute on State (Any)``-Node in the ``vsLinx/utility`` group. Forwards any value while mirroring the bypass/mute state of the node connected to its ``trigger`` input onto the directly connected downstream node(s) (bypass → bypass, mute → mute, normal → normal). Includes an ``Ignore subgraph boundary`` toggle to follow the trigger across subgraph boundaries until a real node, and a ``Mirror this node's own bypass/mute`` toggle to also propagate this node's own state downstream.
 - added new ``VAE Decode (Batched)`` and ``VAE Decode Tiled (Batched)`` nodes in the ``vsLinx/latent`` group. They work exactly like ComfyUI's built-in VAE Decode / VAE Decode (Tiled) but add a ``batch_size`` field that controls how many latents are decoded by the VAE at once (default ``1``). Decoding fewer at a time lowers peak VRAM and can speed up generation; values >= the batch size behave identically to the built-in nodes.
 - added new ``(Impact-Pack) Interactive Detailer``-Node in the ``vsLinx/detailer`` group. A FaceDetailer clone that, instead of a wildcard field, pauses the workflow and pops up a dialog to enter a prompt per detected segment (empty = base prompt, ``[CONCAT]`` to append, ``[SKIP]`` to leave untouched), then details each segment with its own prompt. Requires ComfyUI-Impact-Pack.
 - added ``lanczos`` as an additional ``upscale_method`` option to the ``Upscale by Factor (With Model)``-Node. Lanczos gives the sharpest, highest-quality resize but runs on the CPU (via PIL), so it is somewhat slower than the other methods.

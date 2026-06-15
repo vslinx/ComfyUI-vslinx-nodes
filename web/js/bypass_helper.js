@@ -18,6 +18,15 @@ const CONFIGS = {
   },
 };
 
+// State-mirror nodes: instead of a boolean, they read the mode of the node
+// wired into a "trigger" input and mirror it onto their downstream nodes
+// (bypass -> bypass, mute -> mute, anything else -> normal).
+const STATE_CONFIGS = {
+  vsLinx_BypassMuteOnState: {
+    triggerInputIndex: 1,
+  },
+};
+
 const POLL_MS = 200;
 
 function inferType(node) {
@@ -319,6 +328,163 @@ function stopPolling(node) {
   }
 }
 
+// ----------------------- state-mirror node logic -----------------------
+
+function isInputLinked(node, idx) {
+  const pin = node.inputs?.[idx];
+  return !!(pin && (pin.link != null || (pin.links?.length)));
+}
+
+function readIgnoreBoundary(node) {
+  const w = node.widgets?.find(x => x.name === "ignore_subgraph_boundary");
+  return !!(w && w.value);
+}
+
+// Find the inner link inside a subgraph that feeds the given output boundary
+// slot (target_id < 0 marks a link exiting the subgraph through its output pin).
+function findSubgraphOutputLink(subgraph, outputSlot) {
+  const links = subgraph?.links;
+  if (!links) return null;
+  const vals = (typeof links.values === "function") ? links.values() : Object.values(links);
+  for (const l of vals) {
+    if (l && l.target_id < 0 && l.target_slot === outputSlot) return l;
+  }
+  return null;
+}
+
+// Walk a trigger link across subgraph boundaries until a real (non-container)
+// node is reached. Crosses inbound boundaries (origin_id < 0 -> the subgraph's
+// own input pin -> resolve in the parent graph) and outbound boundaries (source
+// is a subgraph container node -> drill into the inner node feeding that output).
+function resolveTriggerNodeByLink(graph, link, seen) {
+  if (!link || seen.has(link)) return null;
+  seen.add(link);
+
+  if (link.origin_id < 0) {
+    const parent = findParentNode(graph);
+    if (!parent) return null;
+    const outerInput = parent.node.inputs?.[link.origin_slot];
+    const olid = outerInput?.link;
+    if (olid == null) return null;
+    return resolveTriggerNodeByLink(parent.graph, parent.graph?.links?.[olid], seen);
+  }
+
+  const src = graph.getNodeById(link.origin_id);
+  if (!src) return null;
+
+  if (src.subgraph) {
+    const ilink = findSubgraphOutputLink(src.subgraph, link.origin_slot);
+    if (!ilink) return null;
+    return resolveTriggerNodeByLink(src.subgraph, ilink, seen);
+  }
+
+  return src;
+}
+
+// Read the mode (0 = normal, 2 = mute/never, 4 = bypass) of the node connected
+// to the trigger input. Returns null when nothing is connected (or the source
+// can't be resolved), which the caller treats as "do nothing". When
+// crossBoundary is true, subgraph boundaries are followed until a real node.
+function readTriggerMode(node, triggerInputIndex, crossBoundary) {
+  const linkId = getFirstIncomingLinkId(node, triggerInputIndex);
+  if (linkId == null) return null;
+  const link = node.graph?.links?.[linkId];
+  if (!link) return null;
+
+  if (crossBoundary) {
+    const src = resolveTriggerNodeByLink(node.graph, link, new Set());
+    return src ? (src.mode ?? MODE_ALWAYS) : null;
+  }
+
+  // Direct node only: don't follow links crossing a subgraph boundary.
+  if (link.origin_id < 0) return null;
+  const src = node.graph.getNodeById(link.origin_id);
+  if (!src) return null;
+  return src.mode ?? MODE_ALWAYS;
+}
+
+function readMirrorOwn(node) {
+  const w = node.widgets?.find(x => x.name === "mirror_own_state");
+  return !!(w && w.value);
+}
+
+// Only BYPASS and NEVER are mirrored; everything else means "normal".
+function isMirroredMode(mode) {
+  return mode === MODE_BYPASS || mode === MODE_NEVER;
+}
+
+// Compute the mode the downstream node(s) should have and apply it. The node's
+// own bypass/mute state (when "mirror_own_state" is on) takes precedence over
+// the trigger node's state; if neither is active the downstream runs normally.
+function evaluateState(node, cfg) {
+  let mode = MODE_ALWAYS;
+
+  if (readMirrorOwn(node) && isMirroredMode(node.mode)) {
+    mode = node.mode;
+  } else if (isInputLinked(node, cfg.triggerInputIndex)) {
+    const m = readTriggerMode(node, cfg.triggerInputIndex, readIgnoreBoundary(node));
+    if (isMirroredMode(m)) mode = m;
+  }
+
+  const on = isMirroredMode(mode);
+  setDownstreamMode(node, on ? mode : MODE_ALWAYS, on);
+}
+
+function startStatePolling(node, cfg) {
+  stopStatePolling(node);
+  node.__vl_state_poll = setInterval(() => evaluateState(node, cfg), POLL_MS);
+}
+
+function stopStatePolling(node) {
+  if (node.__vl_state_poll) {
+    clearInterval(node.__vl_state_poll);
+    node.__vl_state_poll = null;
+  }
+}
+
+// (Re)evaluate a state-mirror node. We poll while a trigger is connected or
+// while "mirror_own_state" is on (the node's own mode can change at any time);
+// otherwise we stop and force the downstream node(s) back to normal.
+function refreshState(node, cfg) {
+  if (isInputLinked(node, cfg.triggerInputIndex) || readMirrorOwn(node)) {
+    startStatePolling(node, cfg);
+  } else {
+    stopStatePolling(node);
+  }
+  evaluateState(node, cfg);
+}
+
+// Friendly display labels for the toggles (the widget *names* stay as valid
+// Python identifiers; litegraph draws `label` when present, else `name`).
+const STATE_WIDGET_LABELS = {
+  ignore_subgraph_boundary: "Ignore subgraph boundary",
+  mirror_own_state: "Mirror this node's own bypass/mute",
+};
+
+function setStateLabels(node) {
+  for (const w of (node.widgets || [])) {
+    if (STATE_WIDGET_LABELS[w.name]) w.label = STATE_WIDGET_LABELS[w.name];
+  }
+}
+
+// Re-evaluate immediately when either toggle changes (polling would also catch
+// it within POLL_MS, this just makes it snappy).
+function hookStateWidget(node, cfg) {
+  for (const name of ["ignore_subgraph_boundary", "mirror_own_state"]) {
+    const w = node.widgets?.find(x => x.name === name);
+    if (!w || w.__vl_hooked) continue;
+    w.__vl_hooked = true;
+    const old = w.callback;
+    w.callback = function () {
+      try {
+        return (typeof old === "function") ? old.apply(this, arguments) : undefined;
+      } finally {
+        refreshState(node, cfg);
+      }
+    };
+  }
+}
+
 function hookLocalWidget(node, cfg) {
   const w = findBoolWidget(node, cfg.readWidgetName);
   if (!w) return;
@@ -337,6 +503,45 @@ function hookLocalWidget(node, cfg) {
 app.registerExtension({
   name: "vsLinx.bool_flow",
   beforeRegisterNodeDef(nodeType, nodeData, _app) {
+    const scfg = STATE_CONFIGS[nodeData?.name];
+    if (scfg) {
+      const onNodeCreated = nodeType.prototype.onNodeCreated;
+      nodeType.prototype.onNodeCreated = function () {
+        const r = onNodeCreated?.apply(this, arguments);
+        this.serialize_widgets = true;
+        setStateLabels(this);
+        hookStateWidget(this, scfg);
+        scheduleType(this);
+        refreshState(this, scfg);
+        return r;
+      };
+
+      const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+      nodeType.prototype.onConnectionsChange = function () {
+        const r = onConnectionsChange?.apply(this, arguments);
+        scheduleType(this);
+        refreshState(this, scfg);
+        return r;
+      };
+
+      const onConfigure = nodeType.prototype.onConfigure;
+      nodeType.prototype.onConfigure = function () {
+        const r = onConfigure?.apply(this, arguments);
+        setStateLabels(this);
+        hookStateWidget(this, scfg);
+        scheduleType(this);
+        refreshState(this, scfg);
+        return r;
+      };
+
+      const onRemoved = nodeType.prototype.onRemoved;
+      nodeType.prototype.onRemoved = function () {
+        stopStatePolling(this);
+        return onRemoved?.apply(this, arguments);
+      };
+      return;
+    }
+
     const cfg = CONFIGS[nodeData?.name];
     if (!cfg) return;
 
