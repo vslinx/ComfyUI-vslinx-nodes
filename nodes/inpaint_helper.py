@@ -106,8 +106,10 @@ def _bbox_from_mask(mask_l: Image.Image, threshold: float = 0.5) -> Optional[Tup
 def _expand_bbox(x0,y0,x1,y1, w,h, pad: int):
     if pad <= 0:
         return x0,y0,x1,y1
-    x0 = max(0, x0 - pad); y0 = max(0, y0 - pad)
-    x1 = min(w, x1 + pad); y1 = min(h, y1 + pad)
+    x0 = max(0, x0 - pad)
+    y0 = max(0, y0 - pad)
+    x1 = min(w, x1 + pad)
+    y1 = min(h, y1 + pad)
     return x0,y0,x1,y1
 
 def _fit_size(src_w, src_h, dst_w, dst_h, mode="fit"):
@@ -207,7 +209,8 @@ class vsLinx_FitImageIntoBBoxMask:
                 continue
 
             x0, y0, x1, y1 = _expand_bbox(*bb, canvas.width, canvas.height, pad)
-            box_w = max(1, x1 - x0); box_h = max(1, y1 - y0)
+            box_w = max(1, x1 - x0)
+            box_h = max(1, y1 - y0)
 
             src_w, src_h = s_img.width, s_img.height
             new_w, new_h = _fit_size(src_w, src_h, box_w, box_h, mode=mode)
@@ -237,7 +240,9 @@ class vsLinx_FitImageIntoBBoxMask:
             f_arr = np.array(footprint, dtype=np.uint8)
             placed = Image.fromarray(np.minimum(m_arr, f_arr), mode="L")
 
-            composites.append(canvas); fitted_only.append(on_black); placed_masks.append(placed)
+            composites.append(canvas)
+            fitted_only.append(on_black)
+            placed_masks.append(placed)
             if idx == 0:
                 out_x, out_y, out_w, out_h = int(x0), int(y0), int(box_w), int(box_h)
 
