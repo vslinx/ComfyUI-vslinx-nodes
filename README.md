@@ -169,6 +169,16 @@ Decoding fewer latents per call **lowers peak VRAM** and on many setups **speeds
 #### VAE Decode Tiled (Batched)
 The same idea applied to ComfyUI's **VAE Decode (Tiled)** node: all original fields (``tile_size``, ``overlap``, ``temporal_size``, ``temporal_overlap``) are kept unchanged and a ``batch_size`` field is added on top. ``batch_size`` controls *how many latents* are decoded per call, while the tiling fields control how each individual latent is split spatially — the two are independent and combine freely.
 
+### Sampling
+#### Anima LLLite Tiled ControlNet Sampler
+An all-in-one node that replaces a whole manual <b>Anima ControlNet-LLLite tiled upscale</b> graph (image tiling → per-tile VAE encode / LLLite apply / KSampler / VAE decode → batch + untile) with a single node. The grid is <b>dynamic</b>: change ``rows``/``columns`` and the node loops the correct number of times instead of forcing you to wire up one sampler chain per tile.
+
+For every tile in the ``rows`` × ``columns`` grid it applies **Anima ControlNet-LLLite** to the model using that tile as the control image, **VAE-encodes** the tile, runs the **KSampler** with the shared ``positive``/``negative`` conditioning, and **VAE-decodes** the result. When all tiles are done they are feathered along their overlaps and **stitched back** into a single image (same tiling/feathering math as comfyui_essentials Image Tile / Image Untile). All tiles share the same ``seed``.
+
+It exposes the sampler fields (``seed``, ``steps``, ``cfg``, ``sampler``, ``scheduler``, ``denoise``), the LLLite fields (``LLLite Model``, ``strength``, ``start_percent``, ``end_percent``, ``preserve_wrapper``) and the tiling fields (``rows``, ``columns``, ``overlap``, ``overlap_x``, ``overlap_y``, ``method``). The overlaps used for stitching are the ones actually computed during tiling, so the geometry always lines up. For lower VRAM, use more ``rows``/``columns`` (smaller tiles).
+
+**No extra node packs are required** - the Anima ControlNet-LLLite apply logic is bundled (vendored from [kohya-ss/ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite), see [Credits](#credits)), so the node works on its own. It can also be found in the node search under terms like ``Anima LLLite Tiled Sampler`` or ``Anima Tile Upscale``.
+
 ### Inpaint helper
 #### Fit Image into BBox Mask
 This node fits an image <b>inside the bounding box region of a mask</b> and places it into a destination image (or a blank canvas). It’s useful for workflows where you want to insert or align a smaller image (e.g. pose, object, logo, patch) into a specific masked region while keeping correct proportions.
@@ -185,6 +195,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.11.0
+- added new ``Anima LLLite Tiled ControlNet Sampler``-Node in the ``vsLinx/sampling`` group. An all-in-one node that tiles an image into a dynamic ``rows`` × ``columns`` grid and, for each tile, applies Anima ControlNet-LLLite (tile as control), VAE-encodes, KSamples and VAE-decodes, then feathers and stitches the tiles back together — replacing a whole manual tile/sample/untile graph with a single node. Exposes the sampler, LLLite and tiling (``overlap``/``overlap_x``/``overlap_y``/``method``) fields. Needs no extra node packs — the Anima ControlNet-LLLite logic is bundled (vendored from kohya-ss, see Credits).
+
 ### v.1.10.0
 - added new ``Forward/Bypass-Mute on State (Any)``-Node in the ``vsLinx/utility`` group. Forwards any value while mirroring the bypass/mute state of the node connected to its ``trigger`` input onto the directly connected downstream node(s) (bypass → bypass, mute → mute, normal → normal). Includes an ``Ignore subgraph boundary`` toggle to follow the trigger across subgraph boundaries until a real node, and a ``Mirror this node's own bypass/mute`` toggle to also propagate this node's own state downstream.
 - added new ``VAE Decode (Batched)`` and ``VAE Decode Tiled (Batched)`` nodes in the ``vsLinx/latent`` group. They work exactly like ComfyUI's built-in VAE Decode / VAE Decode (Tiled) but add a ``batch_size`` field that controls how many latents are decoded by the VAE at once (default ``1``). Decoding fewer at a time lowers peak VRAM and can speed up generation; values >= the batch size behave identically to the built-in nodes.
@@ -269,3 +282,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 
 ### v1.0.0 
 * initial release
+
+## Credits
+- **[kohya-ss](https://github.com/kohya-ss)** for **[ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite)** (Apache License 2.0). The ``Anima LLLite Tiled ControlNet Sampler`` node bundles a vendored copy of its ControlNet-LLLite apply logic (under ``nodes/_vendor``, with the Apache license kept alongside) so the node runs without requiring that pack to be installed.
+- **[ltdrdata](https://github.com/ltdrdata)** for **[ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack)**, which powers the ``(Impact-Pack) Interactive Detailer`` and ``(Impact-Pack) Multiline Wildcard Text`` nodes.
