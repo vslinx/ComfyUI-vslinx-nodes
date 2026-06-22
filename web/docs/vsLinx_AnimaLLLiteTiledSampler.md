@@ -35,6 +35,8 @@ Parameters:
 | overlap_x | INT | Extra horizontal overlap in pixels. |
 | overlap_y | INT | Extra vertical overlap in pixels. |
 | method | COMBO | Resampling (``lanczos``, ``nearest-exact``, ``bilinear``, ``area``, ``bicubic``) used to keep every decoded tile at a uniform size before stitching. |
+| color_match | COMBO | Per-tile color matching against the source tile, to fix tonal seams (brightness/colour steps between tiles). ``none`` (default), ``mean_std`` (re-scales each tile's per-channel mean/std — fast, simple), ``wavelet`` (keeps the tile's detail but takes the source tile's broad tone — better on textured tiles). |
+| color_match_strength | FLOAT | How strongly to apply the color match (``0`` = off, ``1`` = full). |
 
 Outputs:
 | Parameter | Type | Description |
@@ -45,4 +47,5 @@ Notes:
 - Like the essentials Image Tile node, the image is cropped to a whole number of tiles (``columns × tile_width`` by ``rows × tile_height``), so the output can be a few pixels smaller than the input.
 - The overlaps used for stitching are the ones actually computed during tiling (after clamping to at most half a tile), so the geometry always lines up even if ``overlap_x``/``overlap_y`` exceed half the tile size.
 - For lower VRAM use more ``rows``/``columns`` (smaller tiles) rather than a tiled VAE — splitting the VAE pass tends to hurt quality without a meaningful speed gain at these tile sizes.
+- Tiles sampled independently can drift in overall tone, leaving a faint brightness/colour step (seam) across smooth areas — most visible on gradients like skin or sky. ``color_match`` re-anchors each tile's colour to its source tile so the tones stay consistent and the step disappears.
 - 4-channel (inpaint) LLLite weights are not supported here since they require a per-tile mask; use the standalone AnimaLLLiteApply node for that case.
