@@ -177,6 +177,8 @@ For every tile in the ``rows`` × ``columns`` grid it applies **Anima ControlNet
 
 It exposes the sampler fields (``seed``, ``steps``, ``cfg``, ``sampler``, ``scheduler``, ``denoise``), the LLLite fields (``LLLite Model``, ``strength``, ``start_percent``, ``end_percent``, ``preserve_wrapper``) and the tiling fields (``rows``, ``columns``, ``overlap``, ``overlap_x``, ``overlap_y``, ``method``). The overlaps used for stitching are the ones actually computed during tiling, so the geometry always lines up. For lower VRAM, use more ``rows``/``columns`` (smaller tiles).
 
+An optional ``color_match`` (``mean_std`` or ``wavelet``, with ``color_match_strength``) re-anchors each tile's colour to its source tile, fixing *tonal* seams — the faint brightness/colour steps between independently-sampled tiles, most visible on smooth gradients. ``mean_std`` matches per-channel mean/std; ``wavelet`` keeps the tile's detail but takes the source's broad tone.
+
 **No extra node packs are required** - the Anima ControlNet-LLLite apply logic is bundled (vendored from [kohya-ss/ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite), see [Credits](#credits)), so the node works on its own. It can also be found in the node search under terms like ``Anima LLLite Tiled Sampler`` or ``Anima Tile Upscale``.
 
 ### Inpaint helper
@@ -196,7 +198,7 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 
 ## Changelog
 ### v.1.11.0
-- added new ``Anima LLLite Tiled ControlNet Sampler``-Node in the ``vsLinx/sampling`` group. An all-in-one node that tiles an image into a dynamic ``rows`` × ``columns`` grid and, for each tile, applies Anima ControlNet-LLLite (tile as control), VAE-encodes, KSamples and VAE-decodes, then feathers and stitches the tiles back together — replacing a whole manual tile/sample/untile graph with a single node. Exposes the sampler, LLLite and tiling (``overlap``/``overlap_x``/``overlap_y``/``method``) fields. Needs no extra node packs — the Anima ControlNet-LLLite logic is bundled (vendored from kohya-ss, see Credits).
+- added new ``Anima LLLite Tiled ControlNet Sampler``-Node in the ``vsLinx/sampling`` group. An all-in-one node that tiles an image into a dynamic ``rows`` × ``columns`` grid and, for each tile, applies Anima ControlNet-LLLite (tile as control), VAE-encodes, KSamples and VAE-decodes, then feathers and stitches the tiles back together — replacing a whole manual tile/sample/untile graph with a single node. Exposes the sampler, LLLite and tiling (``overlap``/``overlap_x``/``overlap_y``/``method``) fields, plus a per-tile ``color_match`` (``mean_std``/``wavelet``) that fixes tonal seams between tiles. Needs no extra node packs — the Anima ControlNet-LLLite logic is bundled (vendored from kohya-ss, see Credits).
 
 ### v.1.10.0
 - added new ``Forward/Bypass-Mute on State (Any)``-Node in the ``vsLinx/utility`` group. Forwards any value while mirroring the bypass/mute state of the node connected to its ``trigger`` input onto the directly connected downstream node(s) (bypass → bypass, mute → mute, normal → normal). Includes an ``Ignore subgraph boundary`` toggle to follow the trigger across subgraph boundaries until a real node, and a ``Mirror this node's own bypass/mute`` toggle to also propagate this node's own state downstream.
