@@ -190,6 +190,34 @@ def _color_match_wavelet(target, ref):
     return (t_high + r_low).movedim(1, -1)
 
 
+# --- MultiDiffusion latent tiling (overlap-averaged each denoising step) ------
+
+def _md_spans(total, n, ext):
+    """Cover [0, total] with ``n`` spans; interior edges extended by ``ext`` so
+    neighbours overlap, first span starts at 0 and last reaches ``total``."""
+    base = max(1, total // n)
+    spans = []
+    for i in range(n):
+        s = 0 if i == 0 else i * base - ext
+        e = total if i == n - 1 else (i + 1) * base + ext
+        spans.append((max(0, s), min(total, e)))
+    return spans
+
+
+def _md_weight_1d(length, taper_left, taper_right, device, dtype):
+    """Per-axis blend weight: 1 in the core, linearly ramping across the overlap
+    on each side that abuts a neighbour. Stays > 0 everywhere (safe to divide by
+    the accumulated weight)."""
+    w = torch.ones(length, device=device, dtype=dtype)
+    tl = min(int(taper_left), length // 2)
+    tr = min(int(taper_right), length // 2)
+    if tl > 0:
+        w[:tl] = torch.linspace(0, 1, tl + 2, device=device, dtype=dtype)[1:-1]
+    if tr > 0:
+        w[length - tr:] = torch.linspace(1, 0, tr + 2, device=device, dtype=dtype)[1:-1]
+    return w
+
+
 class VSLinx_AnimaLLLiteTiledSampler:
     @classmethod
     def INPUT_TYPES(cls):
@@ -205,6 +233,9 @@ class VSLinx_AnimaLLLiteTiledSampler:
                 "positive": ("CONDITIONING",),
                 "negative": ("CONDITIONING",),
                 "vae": ("VAE",),
+
+                "sampling_mode": (["per_tile", "multidiffusion"],
+                    {"tooltip": "per_tile: sample each tile fully then stitch (lowest VRAM; can show seams/ghosting). multidiffusion: one sampling pass over the whole image, averaging overlapping tiles in latent space every step — tiles stay in sync so seams and double-exposure are eliminated (slightly more VRAM). In multidiffusion mode the 'method' and 'color_match' fields are not used."}),
 
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
@@ -262,7 +293,8 @@ class VSLinx_AnimaLLLiteTiledSampler:
                 seed, steps, cfg, sampler_name, scheduler, denoise,
                 lllite_name, strength, start_percent, end_percent, preserve_wrapper,
                 rows, columns, overlap, overlap_x, overlap_y, method,
-                color_match="none", color_match_strength=1.0):
+                color_match="none", color_match_strength=1.0,
+                sampling_mode="per_tile"):
         import comfy.utils
         import folder_paths
         from nodes import VAEEncode, VAEDecode, common_ksampler
@@ -277,6 +309,21 @@ class VSLinx_AnimaLLLiteTiledSampler:
 
         vae_encoder = VAEEncode()
         vae_decoder = VAEDecode()
+        batch_size = image.shape[0]
+
+        if sampling_mode == "multidiffusion":
+            pbar = comfy.utils.ProgressBar(batch_size)
+            results = []
+            for b in range(batch_size):
+                results.append(self._run_multidiffusion(
+                    image[b:b + 1], model, weights_path, vae, positive, negative,
+                    seed, steps, cfg, sampler_name, scheduler, denoise,
+                    strength, start_percent, end_percent, preserve_wrapper,
+                    rows, columns, overlap, overlap_x, overlap_y,
+                    vae_encoder, vae_decoder,
+                ))
+                pbar.update(1)
+            return (torch.cat(results, dim=0),)
 
         def color_correct(target, ref):
             """Match ``target``'s colour to source ``ref`` per the selected mode."""
@@ -309,7 +356,6 @@ class VSLinx_AnimaLLLiteTiledSampler:
         # Process each image of an input batch independently and stitch each one
         # back on its own, so a batch of N images comes out as a batch of N
         # results (without this the tiles of different images would be mixed).
-        batch_size = image.shape[0]
         pbar = comfy.utils.ProgressBar(batch_size * rows * columns)
 
         results = []
@@ -336,6 +382,122 @@ class VSLinx_AnimaLLLiteTiledSampler:
             ))
 
         return (torch.cat(results, dim=0),)
+
+    def _run_multidiffusion(self, img, model, weights_path, vae, positive, negative,
+                            seed, steps, cfg, sampler_name, scheduler, denoise,
+                            strength, start_percent, end_percent, preserve_wrapper,
+                            rows, columns, overlap, overlap_x, overlap_y,
+                            vae_encoder, vae_decoder):
+        """MultiDiffusion: one sampler pass over the whole latent, tiling + LLLite
+        applied per-tile and averaged in latent space at every denoising step.
+
+        Tiles never run to completion independently, so they stay consistent and
+        there are no seams or double-exposures to blend away.
+        """
+        from nodes import common_ksampler
+        from ._vendor.anima_lllite_apply import build_anima_lllite, prepare_cond_image
+
+        lllite, patch_spatial, cond_in_channels, _ = build_anima_lllite(
+            model, weights_path, strength
+        )
+        if cond_in_channels == 4:
+            raise ValueError(
+                "MultiDiffusion mode does not support 4-channel (inpaint) LLLite weights."
+            )
+
+        model_sampling = model.get_model_object("model_sampling")
+        sigma_start = float(model_sampling.percent_to_sigma(start_percent))
+        sigma_end = float(model_sampling.percent_to_sigma(end_percent))
+
+        src_image = img.detach().clone()
+
+        # Encode the whole image once (ComfyUI auto-tiles the VAE if it would OOM).
+        latent = vae_encoder.encode(vae, img)[0]
+        x0 = latent["samples"]
+        latent_h, latent_w = int(x0.shape[-2]), int(x0.shape[-1])
+
+        # Latent-space tile grid (covers the full latent; last tile reaches the edge).
+        tile_hl = max(1, latent_h // rows)
+        tile_wl = max(1, latent_w // columns)
+        ov_hl = 0 if rows == 1 else min(int(tile_hl * overlap) + overlap_y // 8, tile_hl // 2)
+        ov_wl = 0 if columns == 1 else min(int(tile_wl * overlap) + overlap_x // 8, tile_wl // 2)
+        ys = _md_spans(latent_h, rows, ov_hl)
+        xs = _md_spans(latent_w, columns, ov_wl)
+
+        state = {"tag": None, "tiles": None}
+
+        def build_tiles(device, dtype):
+            tiles = []
+            for i, (y0, y1) in enumerate(ys):
+                ty_l = (ys[i - 1][1] - y0) if i > 0 else 0
+                ty_r = (y1 - ys[i + 1][0]) if i < rows - 1 else 0
+                wy = _md_weight_1d(y1 - y0, ty_l, ty_r, device, dtype)
+                for j, (x0, x1) in enumerate(xs):
+                    tx_l = (xs[j - 1][1] - x0) if j > 0 else 0
+                    tx_r = (x1 - xs[j + 1][0]) if j < columns - 1 else 0
+                    wx = _md_weight_1d(x1 - x0, tx_l, tx_r, device, dtype)
+                    weight = wy[:, None] * wx[None, :]  # (th, tw)
+                    # control-image crop for this tile (latent box -> pixel box).
+                    cond_crop = src_image[:, y0 * 8:y1 * 8, x0 * 8:x1 * 8, :]
+                    cond_pp = prepare_cond_image(
+                        cond_crop, y1 - y0, x1 - x0, device, dtype, patch_spatial
+                    )
+                    tiles.append({"y0": y0, "y1": y1, "x0": x0, "x1": x1,
+                                  "weight": weight, "cond": cond_pp})
+            return tiles
+
+        old_wrapper = model.model_options.get("model_function_wrapper")
+
+        def call_model(apply_model, xt, t, c):
+            if preserve_wrapper and old_wrapper is not None:
+                return old_wrapper(apply_model, {"input": xt, "timestep": t, "c": c})
+            return apply_model(xt, t, **c)
+
+        def wrapper(apply_model, args):
+            x_in = args["input"]
+            t = args["timestep"]
+            c = args["c"]
+            device, dtype = x_in.device, x_in.dtype
+
+            tag = (device, dtype)
+            if state["tag"] != tag:
+                lllite.to(device=device, dtype=dtype)
+                state["tiles"] = build_tiles(device, dtype)
+                state["tag"] = tag
+
+            active = sigma_end <= float(t.max().item()) <= sigma_start
+
+            acc = torch.zeros_like(x_in)
+            lead = (1,) * (x_in.ndim - 2)
+            wsum = torch.zeros(lead + (x_in.shape[-2], x_in.shape[-1]),
+                               device=device, dtype=dtype)
+
+            for td in state["tiles"]:
+                y0, y1, x0, x1 = td["y0"], td["y1"], td["x0"], td["x1"]
+                x_tile = x_in[..., y0:y1, x0:x1]
+                if active:
+                    lllite.set_multiplier(strength)
+                    lllite.set_cond_image(td["cond"])
+                    lllite.apply_to()
+                try:
+                    eps = call_model(apply_model, x_tile, t, c)
+                finally:
+                    if active:
+                        lllite.restore()
+                        lllite.clear_cond_image()
+                wb = td["weight"].view(lead + td["weight"].shape)
+                acc[..., y0:y1, x0:x1] += eps * wb
+                wsum[..., y0:y1, x0:x1] += wb
+
+            return acc / wsum.clamp(min=1e-6)
+
+        m = model.clone()
+        m.set_model_unet_function_wrapper(wrapper)
+        sampled = common_ksampler(
+            m, seed, steps, cfg, sampler_name, scheduler,
+            positive, negative, latent, denoise=denoise,
+        )[0]
+        return vae_decoder.decode(vae, sampled)[0]
 
 
 NODE_CLASS_MAPPINGS = {
