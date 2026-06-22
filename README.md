@@ -197,6 +197,10 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.11.1
+- fixed ``Anima LLLite Tiled ControlNet Sampler`` mangling **image batches**: a batch of N images is now tiled, sampled and stitched per-image and returned as a batch of N (previously the tiles of all images were mixed into one morphed result). Batch of 1 and list inputs are unchanged.
+- added an optional per-tile ``color_match`` (``mean_std`` / ``wavelet``, with ``color_match_strength``) to the ``Anima LLLite Tiled ControlNet Sampler``. It re-anchors each tile's colour to its source tile before stitching, fixing tonal seams (faint brightness/colour steps between independently-sampled tiles, most visible on smooth gradients). Default ``none``, so existing graphs are unaffected; it's a pixel-stats pass and adds no extra sampling.
+
 ### v.1.11.0
 - added new ``Anima LLLite Tiled ControlNet Sampler``-Node in the ``vsLinx/sampling`` group. An all-in-one node that tiles an image into a dynamic ``rows`` × ``columns`` grid and, for each tile, applies Anima ControlNet-LLLite (tile as control), VAE-encodes, KSamples and VAE-decodes, then feathers and stitches the tiles back together — replacing a whole manual tile/sample/untile graph with a single node. Exposes the sampler, LLLite and tiling (``overlap``/``overlap_x``/``overlap_y``/``method``) fields, plus a per-tile ``color_match`` (``mean_std``/``wavelet``) that fixes tonal seams between tiles. Needs no extra node packs — the Anima ControlNet-LLLite logic is bundled (vendored from kohya-ss, see Credits).
 

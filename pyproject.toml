@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-vslinx-nodes"
 description = "Custom ComfyUI nodes to streamline workflows: multi-select image loaders (batch/list) and an auto-refreshing last-image loader; image-into-mask-bbox compositing; pixel-art with retro palettes (GameBoy, CGA, NES, Pico-8); exact-factor model upscaling (nearest/bilinear/area/Lanczos); batched VAE Decode/Tiled to cut peak VRAM; an interactive Impact-Pack detailer with per-segment prompts; boolean AND/OR/flip plus bypass/mute nodes driven by a boolean or another node's state; Any to Pipe / Pipe to Any to bundle up to 5 values into one wire; group bookmarks; multiline wildcard text for Impact-Pack; and an rgthree Power LoRA Loader to Image Saver metadata bridge. Also adds settings for model/LoRA hover previews in all loaders (rgthree subdirectory compatible) and a fix for 'Return type mismatch' errors from scheduler-extending nodes like RES4LYF."
-version = "1.11.0"
+version = "1.11.1"
 license = { file = "LICENSE" }
 
 [project.urls]
