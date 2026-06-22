@@ -177,7 +177,9 @@ For every tile in the ``rows`` × ``columns`` grid it applies **Anima ControlNet
 
 It exposes the sampler fields (``seed``, ``steps``, ``cfg``, ``sampler``, ``scheduler``, ``denoise``), the LLLite fields (``LLLite Model``, ``strength``, ``start_percent``, ``end_percent``, ``preserve_wrapper``) and the tiling fields (``rows``, ``columns``, ``overlap``, ``overlap_x``, ``overlap_y``, ``method``). The overlaps used for stitching are the ones actually computed during tiling, so the geometry always lines up. For lower VRAM, use more ``rows``/``columns`` (smaller tiles).
 
-An optional ``color_match`` (``mean_std`` or ``wavelet``, with ``color_match_strength``) re-anchors each tile's colour to its source tile, fixing *tonal* seams — the faint brightness/colour steps between independently-sampled tiles, most visible on smooth gradients. ``mean_std`` matches per-channel mean/std; ``wavelet`` keeps the tile's detail but takes the source's broad tone.
+It has two ``sampling_mode``s:
+- **``per_tile``** (default) — sample each tile to completion, then stitch. Lowest VRAM. Because tiles are sampled independently they can show seams or "double-exposure" ghosting; the optional ``color_match`` (``mean_std`` / ``wavelet``, with ``color_match_strength``) re-anchors each tile's colour to its source tile to fix *tonal* seams (brightness/colour steps), but it can't fully remove structural disagreement.
+- **``multidiffusion``** — a single sampling pass over the whole image that splits the latent into overlapping tiles every denoising step, runs the model per tile (each with its own LLLite control crop), and averages the overlaps in latent space. The tiles are re-synced every step so they can't diverge — seams and double-exposure are eliminated. Uses a little more VRAM (it holds the full latent), and ``method`` / ``color_match`` don't apply.
 
 **No extra node packs are required** - the Anima ControlNet-LLLite apply logic is bundled (vendored from [kohya-ss/ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite), see [Credits](#credits)), so the node works on its own. It can also be found in the node search under terms like ``Anima LLLite Tiled Sampler`` or ``Anima Tile Upscale``.
 
@@ -197,6 +199,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.12.0
+- added a ``sampling_mode`` to the ``Anima LLLite Tiled ControlNet Sampler``: the new ``multidiffusion`` mode runs a single sampling pass over the whole image, splitting the latent into overlapping tiles each denoising step, applying LLLite per tile and averaging the overlaps in latent space. Because the tiles are re-synced every step they can't diverge, eliminating the tile seams and "double-exposure" ghosting that the ``per_tile`` mode (still the default) can produce. Uses slightly more VRAM (holds the full latent; the VAE auto-tiles if needed); ``method``/``color_match`` don't apply in this mode.
+
 ### v.1.11.1
 - fixed ``Anima LLLite Tiled ControlNet Sampler`` mangling **image batches**: a batch of N images is now tiled, sampled and stitched per-image and returned as a batch of N (previously the tiles of all images were mixed into one morphed result). Batch of 1 and list inputs are unchanged.
 - added an optional per-tile ``color_match`` (``mean_std`` / ``wavelet``, with ``color_match_strength``) to the ``Anima LLLite Tiled ControlNet Sampler``. It re-anchors each tile's colour to its source tile before stitching, fixing tonal seams (faint brightness/colour steps between independently-sampled tiles, most visible on smooth gradients). Default ``none``, so existing graphs are unaffected; it's a pixel-stats pass and adds no extra sampling.

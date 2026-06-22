@@ -106,18 +106,21 @@ def _build_inpaint_cond_image(rgb_pm1: torch.Tensor, mask01: torch.Tensor,
     return torch.cat([rgb_pm1, mask_pm1], dim=1)
 
 
-def apply_anima_lllite(model, weights_path: str, image: torch.Tensor, strength: float,
-                       start_percent: float, end_percent: float,
-                       preserve_wrapper: bool = True, mask: Optional[torch.Tensor] = None):
-    """Patch ``model`` with Anima ControlNet-LLLite and return the patched clone.
+# Public alias so callers (e.g. the MultiDiffusion sampler) can preprocess a
+# cond image to a given latent resolution without reaching for a private name.
+prepare_cond_image = _prepare_cond_image
 
-    ``weights_path`` is the resolved path to the LLLite ``.safetensors`` file.
+
+def build_anima_lllite(model, weights_path: str, strength: float):
+    """Build + load a ``ControlNetLLLiteDiT`` from the weights' metadata.
+
+    Returns ``(lllite, patch_spatial, cond_in_channels, inpaint_masked_input)``.
+    Does not clone the model or install a wrapper — the caller drives the lllite
+    object (``set_cond_image`` / ``apply_to`` / ``restore``) however it needs.
     """
     if weights_path is None or not os.path.isfile(weights_path):
         raise FileNotFoundError(f"LLLite weights not found: {weights_path}")
 
-    # Architecture is fully determined by the trained weights — read everything
-    # from metadata rather than exposing knobs that would just cause load errors.
     meta = read_lllite_metadata(weights_path)
     ce_dim = int(meta.get("lllite.cond_emb_dim", 32))
     m_dim = int(meta.get("lllite.mlp_dim", 64))
@@ -132,19 +135,6 @@ def apply_anima_lllite(model, weights_path: str, image: torch.Tensor, strength: 
         aspp_dilations = ASPP_DEFAULT_DILATIONS
     cond_in_channels = int(meta.get("lllite.cond_in_channels", 3))
     inpaint_masked_input = str(meta.get("lllite.inpaint_masked_input", "false")).lower() == "true"
-
-    # Mask / cond_in_channels consistency: 4ch weights need a MASK, 3ch ignore it.
-    if cond_in_channels == 4 and mask is None:
-        raise ValueError(
-            f"LLLite weights '{os.path.basename(weights_path)}' were trained with "
-            f"cond_in_channels=4 (inpaint mode) and require a MASK input."
-        )
-    if cond_in_channels != 4 and mask is not None:
-        logger.warning(
-            "LLLite weights '%s' are %dch; the provided MASK input will be ignored.",
-            os.path.basename(weights_path), cond_in_channels,
-        )
-        mask = None
 
     dit = _get_inner_dit(model)
     patch_spatial = int(getattr(dit, "patch_spatial", 2))
@@ -163,6 +153,37 @@ def apply_anima_lllite(model, weights_path: str, image: torch.Tensor, strength: 
     )
     load_lllite_weights(lllite, weights_path, strict=False)
     lllite.eval().requires_grad_(False)
+    return lllite, patch_spatial, cond_in_channels, inpaint_masked_input
+
+
+def apply_anima_lllite(model, weights_path: str, image: torch.Tensor, strength: float,
+                       start_percent: float, end_percent: float,
+                       preserve_wrapper: bool = True, mask: Optional[torch.Tensor] = None):
+    """Patch ``model`` with Anima ControlNet-LLLite and return the patched clone.
+
+    ``weights_path`` is the resolved path to the LLLite ``.safetensors`` file.
+    """
+    if weights_path is None or not os.path.isfile(weights_path):
+        raise FileNotFoundError(f"LLLite weights not found: {weights_path}")
+
+    # Architecture is fully determined by the trained weights — read everything
+    # from metadata rather than exposing knobs that would just cause load errors.
+    lllite, patch_spatial, cond_in_channels, inpaint_masked_input = build_anima_lllite(
+        model, weights_path, strength
+    )
+
+    # Mask / cond_in_channels consistency: 4ch weights need a MASK, 3ch ignore it.
+    if cond_in_channels == 4 and mask is None:
+        raise ValueError(
+            f"LLLite weights '{os.path.basename(weights_path)}' were trained with "
+            f"cond_in_channels=4 (inpaint mode) and require a MASK input."
+        )
+    if cond_in_channels != 4 and mask is not None:
+        logger.warning(
+            "LLLite weights '%s' are %dch; the provided MASK input will be ignored.",
+            os.path.basename(weights_path), cond_in_channels,
+        )
+        mask = None
 
     # Convert percent range -> sigma range (start_percent=0 → sigma_max).
     model_sampling = model.get_model_object("model_sampling")
