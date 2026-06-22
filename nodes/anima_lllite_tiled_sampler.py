@@ -321,10 +321,10 @@ class VSLinx_AnimaLLLiteTiledSampler:
             out_tiles = []
             for idx in range(tiles.shape[0]):
                 tile_img = tiles[idx:idx + 1]
-                th, tw = tile_img.shape[1], tile_img.shape[2]
-                # Keep tiles uniform (the VAE may round dims to a multiple of 8)
-                # so the untile geometry and overlaps stay exact.
-                decoded = _resize_to(sample_region(tile_img, denoise), th, tw, method)
+                # sample_region already returns the tile at its original size
+                # (it resizes internally), keeping the untile geometry exact even
+                # if the VAE rounds dims to a multiple of 8.
+                decoded = sample_region(tile_img, denoise)
                 # Re-anchor each tile's colour to its source so tiles can't drift
                 # in tone relative to each other (fixes tonal seams).
                 decoded = color_correct(decoded, tile_img)
