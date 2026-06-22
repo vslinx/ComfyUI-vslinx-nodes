@@ -222,41 +222,48 @@ class VSLinx_AnimaLLLiteTiledSampler:
         vae_encoder = VAEEncode()
         vae_decoder = VAEDecode()
 
-        tiles, tile_w_full, tile_h_full, ov_w, ov_h = _tile_image(
-            image, rows, columns, overlap, overlap_x, overlap_y
-        )
-        num_tiles = tiles.shape[0]
+        # Process each image of an input batch independently and stitch each one
+        # back on its own, so a batch of N images comes out as a batch of N
+        # results (without this the tiles of different images would be mixed).
+        batch_size = image.shape[0]
+        pbar = comfy.utils.ProgressBar(batch_size * rows * columns)
 
-        pbar = comfy.utils.ProgressBar(num_tiles)
-        out_tiles = []
-        for idx in range(num_tiles):
-            tile_img = tiles[idx:idx + 1]
-            th, tw = tile_img.shape[1], tile_img.shape[2]
-
-            # Patch the model so the LLLite control image is this tile.
-            patched_model = apply_anima_lllite(
-                model, weights_path, tile_img, strength,
-                start_percent, end_percent, preserve_wrapper,
+        results = []
+        for b in range(batch_size):
+            tiles, tile_w_full, tile_h_full, ov_w, ov_h = _tile_image(
+                image[b:b + 1], rows, columns, overlap, overlap_x, overlap_y
             )
 
-            latent = vae_encoder.encode(vae, tile_img)[0]
+            out_tiles = []
+            for idx in range(tiles.shape[0]):
+                tile_img = tiles[idx:idx + 1]
+                th, tw = tile_img.shape[1], tile_img.shape[2]
 
-            sampled = common_ksampler(
-                patched_model, seed, steps, cfg, sampler_name, scheduler,
-                positive, negative, latent, denoise=denoise,
-            )[0]
+                # Patch the model so the LLLite control image is this tile.
+                patched_model = apply_anima_lllite(
+                    model, weights_path, tile_img, strength,
+                    start_percent, end_percent, preserve_wrapper,
+                )
 
-            decoded = vae_decoder.decode(vae, sampled)[0]
+                latent = vae_encoder.encode(vae, tile_img)[0]
 
-            # Keep tiles uniform (the VAE may round dims to a multiple of 8) so the
-            # untile geometry and overlaps stay exact.
-            decoded = _resize_to(decoded, th, tw, method)
-            out_tiles.append(decoded)
-            pbar.update(1)
+                sampled = common_ksampler(
+                    patched_model, seed, steps, cfg, sampler_name, scheduler,
+                    positive, negative, latent, denoise=denoise,
+                )[0]
 
-        out_batch = torch.cat(out_tiles, dim=0)
-        result = _untile_image(out_batch, ov_w, ov_h, rows, columns)
-        return (result,)
+                decoded = vae_decoder.decode(vae, sampled)[0]
+
+                # Keep tiles uniform (the VAE may round dims to a multiple of 8) so
+                # the untile geometry and overlaps stay exact.
+                decoded = _resize_to(decoded, th, tw, method)
+                out_tiles.append(decoded)
+                pbar.update(1)
+
+            out_batch = torch.cat(out_tiles, dim=0)
+            results.append(_untile_image(out_batch, ov_w, ov_h, rows, columns))
+
+        return (torch.cat(results, dim=0),)
 
 
 NODE_CLASS_MAPPINGS = {
