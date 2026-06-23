@@ -181,7 +181,12 @@ It has two ``sampling_mode``s:
 - **``per_tile``** (default) — sample each tile to completion, then stitch. Lowest VRAM. Because tiles are sampled independently they can show seams or "double-exposure" ghosting; the optional ``color_match`` (``mean_std`` / ``wavelet``, with ``color_match_strength``) re-anchors each tile's colour to its source tile to fix *tonal* seams (brightness/colour steps), but it can't fully remove structural disagreement.
 - **``multidiffusion``** — a single sampling pass over the whole image that splits the latent into overlapping tiles every denoising step, runs the model per tile (each with its own LLLite control crop), and averages the overlaps in latent space. The tiles are re-synced every step so they can't diverge — seams and double-exposure are eliminated. Uses a little more VRAM (it holds the full latent), and ``method`` / ``color_match`` don't apply.
 
+The ``LLLite Model`` can be picked on the node's own dropdown, or driven from outside by connecting the **Load Anima LLLite Model** node (below) — handy for selecting it once and driving several samplers, or keeping model selection in a loaders group.
+
 **No extra node packs are required** - the Anima ControlNet-LLLite apply logic is bundled (vendored from [kohya-ss/ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite), see [Credits](#credits)), so the node works on its own. It can also be found in the node search under terms like ``Anima LLLite Tiled Sampler`` or ``Anima Tile Upscale``.
+
+#### Load Anima LLLite Model
+A small loader that selects an Anima ControlNet-LLLite weights file (from the ``controlnet`` folder) and outputs its filename for the **Anima LLLite Tiled ControlNet Sampler**'s ``lllite_name`` input — letting you choose the LLLite model once and route it into one or more samplers. It only outputs the filename (the LLLite module is built inside the sampler), so it needs no other node packs.
 
 ### Inpaint helper
 #### Fit Image into BBox Mask
@@ -199,6 +204,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.13.0
+- added a new ``Load Anima LLLite Model``-Node in the ``vsLinx/sampling`` group that outputs an LLLite weights filename for the ``Anima LLLite Tiled ControlNet Sampler``'s ``lllite_name`` input - letting you select the LLLite model from outside the sampler (e.g. choose it once for several samplers, or keep it in a loaders group).
+
 ### v.1.12.0
 - added a ``sampling_mode`` to the ``Anima LLLite Tiled ControlNet Sampler``: the new ``multidiffusion`` mode runs a single sampling pass over the whole image, splitting the latent into overlapping tiles each denoising step, applying LLLite per tile and averaging the overlaps in latent space. Because the tiles are re-synced every step they can't diverge, eliminating the tile seams and "double-exposure" ghosting that the ``per_tile`` mode (still the default) can produce. Uses slightly more VRAM (holds the full latent; the VAE auto-tiles if needed); ``method``/``color_match`` don't apply in this mode.
 

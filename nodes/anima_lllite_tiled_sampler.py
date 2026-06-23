@@ -500,10 +500,63 @@ class VSLinx_AnimaLLLiteTiledSampler:
         return vae_decoder.decode(vae, sampled)[0]
 
 
+def _controlnet_filename_list():
+    """The controlnet folder listing, computed defensively at import time for the
+    loader's combo output type (empty if folder_paths isn't ready yet)."""
+    try:
+        import folder_paths
+
+        return folder_paths.get_filename_list("controlnet")
+    except Exception:
+        return []
+
+
+class VSLinx_AnimaLLLiteLoader:
+    """Picks an Anima ControlNet-LLLite weights file and outputs the filename as a
+    combo, so it can drive the Anima LLLite Tiled ControlNet Sampler's
+    ``lllite_name``. Lets you choose the LLLite model once and route it
+    into one or more samplers.
+
+    It only outputs the filename — the actual LLLite module is built against the
+    model inside the sampler — so it has no dependency on any other node pack.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        import folder_paths
+
+        return {
+            "required": {
+                "lllite_name": (folder_paths.get_filename_list("controlnet"),
+                                {"tooltip": "Anima ControlNet-LLLite weights file (from the controlnet folder)."}),
+            },
+        }
+
+    RETURN_TYPES = (_controlnet_filename_list(),)
+    RETURN_NAMES = ("lllite_name",)
+    FUNCTION = "load"
+    CATEGORY = "vsLinx/sampling"
+    DESCRIPTION = (
+        "Selects an Anima ControlNet-LLLite weights file and outputs its filename. "
+        "Connect it to the Anima LLLite Tiled ControlNet Sampler's lllite_name."
+    )
+    SEARCH_ALIASES = [
+        "load anima lllite",
+        "anima lllite loader",
+        "load lllite model",
+        "lllite model loader",
+    ]
+
+    def load(self, lllite_name):
+        return (lllite_name,)
+
+
 NODE_CLASS_MAPPINGS = {
     "vsLinx_AnimaLLLiteTiledSampler": VSLinx_AnimaLLLiteTiledSampler,
+    "vsLinx_AnimaLLLiteLoader": VSLinx_AnimaLLLiteLoader,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "vsLinx_AnimaLLLiteTiledSampler": "Anima LLLite Tiled ControlNet Sampler",
+    "vsLinx_AnimaLLLiteLoader": "Load Anima LLLite Model",
 }
