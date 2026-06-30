@@ -44,6 +44,8 @@ Parameters:
 | method | COMBO | (per_tile only) Resampling (``lanczos``, ``nearest-exact``, ``bilinear``, ``area``, ``bicubic``) used to keep every decoded tile at a uniform size before stitching. |
 | color_match | COMBO | (per_tile only) Per-tile color matching against the source tile, to fix tonal seams (brightness/colour steps between tiles). ``none`` (default), ``mean_std`` (re-scales each tile's per-channel mean/std — fast, simple), ``wavelet`` (keeps the tile's detail but takes the source tile's broad tone — better on textured tiles). |
 | color_match_strength | FLOAT | (per_tile only) How strongly to apply the color match (``0`` = off, ``1`` = full). |
+| vae_decode_tiled | BOOLEAN | (multidiffusion only) Decode the final full-image latent in tiles instead of one pass, so the decode can't spike VRAM (or, on Windows, spill into slow shared system memory). No effect in ``per_tile`` mode, where each tile is already decoded on its own. Only shown when ``sampling_mode`` is ``multidiffusion``. |
+| vae_decode_tile_size | INT | (multidiffusion only) Tile size in pixels for the tiled VAE decode. Only shown when ``sampling_mode`` is ``multidiffusion``. |
 
 Outputs:
 | Parameter | Type | Description |
@@ -56,4 +58,5 @@ Notes:
 - For lower VRAM use more ``rows``/``columns`` (smaller tiles) rather than a tiled VAE — splitting the VAE pass tends to hurt quality without a meaningful speed gain at these tile sizes.
 - In ``per_tile`` mode, tiles sampled independently can drift in overall tone, leaving a faint brightness/colour step (seam) across smooth areas, and can disagree structurally (a "double-exposure" in the overlap). ``color_match`` fixes the tonal step; for structural seams use ``multidiffusion``.
 - ``multidiffusion`` mode removes seams at the source: tiles are re-synced (overlap-averaged in latent space) at every denoising step, so they can't diverge. It does one full-image VAE encode/decode (ComfyUI auto-tiles the VAE if it would otherwise run out of memory) and holds the full latent in memory, so it uses a little more VRAM than ``per_tile``. ``method`` and ``color_match`` are not used in this mode.
+- The ``multidiffusion`` decode is a single full-image pass and is **independent of ``rows``/``columns``** (the grid only tiles the per-step UNet call, not the VAE), so adding tiles won't shrink it. If that final decode pins your VRAM — on Windows it may not raise a clean out-of-memory error and instead crawl by spilling into shared system memory — enable ``vae_decode_tiled`` to force a tiled decode with a bounded ``vae_decode_tile_size``.
 - 4-channel (inpaint) LLLite weights are not supported here since they require a per-tile mask; use the standalone AnimaLLLiteApply node for that case.

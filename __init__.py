@@ -23,6 +23,7 @@ node_list = [
     "pipe_utils",
     "vae_decode_batched",
     "anima_lllite_tiled_sampler",
+    "multidiffusion_tiled_hires",
 ]
 
 NODE_CLASS_MAPPINGS = {}
