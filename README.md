@@ -179,7 +179,7 @@ It exposes the sampler fields (``seed``, ``steps``, ``cfg``, ``sampler``, ``sche
 
 It has two ``sampling_mode``s:
 - **``per_tile``** (default) — sample each tile to completion, then stitch. Lowest VRAM. Because tiles are sampled independently they can show seams or "double-exposure" ghosting; the optional ``color_match`` (``mean_std`` / ``wavelet``, with ``color_match_strength``) re-anchors each tile's colour to its source tile to fix *tonal* seams (brightness/colour steps), but it can't fully remove structural disagreement.
-- **``multidiffusion``** — a single sampling pass over the whole image that splits the latent into overlapping tiles every denoising step, runs the model per tile (each with its own LLLite control crop), and averages the overlaps in latent space. The tiles are re-synced every step so they can't diverge — seams and double-exposure are eliminated. Uses a little more VRAM (it holds the full latent), and ``method`` / ``color_match`` don't apply.
+- **``multidiffusion``** — a single sampling pass over the whole image that splits the latent into overlapping tiles every denoising step, runs the model per tile (each with its own LLLite control crop), and averages the overlaps in latent space. The tiles are re-synced every step so they can't diverge — seams and double-exposure are eliminated. Uses a little more VRAM (it holds the full latent), and ``method`` / ``color_match`` don't apply. Its final VAE decode is a single full-image pass (independent of ``rows``/``columns``); if that pins your VRAM, enable ``vae_decode_tiled`` (with ``vae_decode_tile_size``) to decode it in tiles. These two fields only show in ``multidiffusion`` mode.
 
 The ``LLLite Model`` can be picked on the node's own dropdown, or driven from outside by connecting the **Load Anima LLLite Model** node (below) — handy for selecting it once and driving several samplers, or keeping model selection in a loaders group.
 
@@ -187,6 +187,9 @@ The ``LLLite Model`` can be picked on the node's own dropdown, or driven from ou
 
 #### Load Anima LLLite Model
 A small loader that selects an Anima ControlNet-LLLite weights file (from the ``controlnet`` folder) and outputs its filename for the **Anima LLLite Tiled ControlNet Sampler**'s ``lllite_name`` input — letting you choose the LLLite model once and route it into one or more samplers. It only outputs the filename (the LLLite module is built inside the sampler), so it needs no other node packs.
+
+#### MultiDiffusion Tiled Hires Fix
+A model-agnostic **tiled hires-fix / refiner** — the ``multidiffusion`` behaviour of the Anima sampler with the LLLite parts removed, so it works on any model (SD/SDXL/Flux/etc.) and needs no extra node packs. It runs a single sampling pass over the whole image, splitting the latent into overlapping tiles every denoising step and averaging the overlaps in latent space, so there are no tile seams and per-step UNet activations stay tile-sized (whole-image coherence at roughly tile-sized peak VRAM). It doesn't upscale on its own: upscale the image first, then refine it here with a low ``denoise`` (~0.3–0.5). The same optional ``vae_decode_tiled`` / ``vae_decode_tile_size`` keep the final full-image decode from spiking VRAM. Findable in node search under ``hires fix``, ``tiled diffusion``, ``multidiffusion``, ``tiled upscale`` and similar.
 
 ### Inpaint helper
 #### Fit Image into BBox Mask
@@ -204,6 +207,10 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.14.0
+- added an optional ``vae_decode_tiled`` (with ``vae_decode_tile_size``) to the ``Anima LLLite Tiled ControlNet Sampler`` for ``multidiffusion`` mode. That mode's final VAE decode is a single full-image pass (independent of ``rows``/``columns``), which can spike VRAM on large images — or, on Windows, crawl by spilling into shared system memory instead of raising a clean out-of-memory error. Enabling it decodes the latent in bounded tiles. Default off, and the two fields only show when ``sampling_mode`` is ``multidiffusion`` (they have no effect in ``per_tile`` mode, where each tile is already decoded on its own).
+- added a new model-agnostic ``MultiDiffusion Tiled Hires Fix`` node in the ``vsLinx/sampling`` group. It's the ``multidiffusion`` behaviour of the ``Anima LLLite Tiled ControlNet Sampler`` with the LLLite parts stripped out, so it works on any model (SD/SDXL/Flux/etc.): one sampling pass over the whole image, splitting the latent into overlapping tiles each denoising step and averaging the overlaps in latent space — no tile seams, and per-step VRAM stays tile-sized. Upscale the image first, then refine it here with a low ``denoise``. Includes the optional ``vae_decode_tiled``/``vae_decode_tile_size`` and search aliases like ``hires fix`` / ``tiled diffusion`` / ``tiled upscale`` so it's findable without knowing the term "multidiffusion".
+
 ### v.1.13.0
 - added a new ``Load Anima LLLite Model``-Node in the ``vsLinx/sampling`` group that outputs an LLLite weights filename for the ``Anima LLLite Tiled ControlNet Sampler``'s ``lllite_name`` input - letting you select the LLLite model from outside the sampler (e.g. choose it once for several samplers, or keep it in a loaders group).
 

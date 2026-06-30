@@ -267,6 +267,11 @@ class VSLinx_AnimaLLLiteTiledSampler:
                     {"tooltip": "Per-tile color matching against the source tile, to fix tonal seams (brightness/colour steps between tiles). 'mean_std' re-scales each tile's per-channel mean/std (fast, simple); 'wavelet' keeps the tile's detail but takes the source tile's broad tone (better on textured tiles)."}),
                 "color_match_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,
                     "tooltip": "How strongly to apply the color match (0 = off, 1 = full)."}),
+
+                "vae_decode_tiled": ("BOOLEAN", {"default": False,
+                    "tooltip": "(multidiffusion only) Decode the final full-image latent in tiles instead of one pass, to avoid a single huge VAE decode that can spike VRAM (or spill into slow shared system memory). No effect in per_tile mode, where each tile is already decoded on its own."}),
+                "vae_decode_tile_size": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 32,
+                    "tooltip": "(multidiffusion only) Tile size in pixels for the tiled VAE decode."}),
             },
         }
 
@@ -294,7 +299,8 @@ class VSLinx_AnimaLLLiteTiledSampler:
                 lllite_name, strength, start_percent, end_percent, preserve_wrapper,
                 rows, columns, overlap, overlap_x, overlap_y, method,
                 color_match="none", color_match_strength=1.0,
-                sampling_mode="per_tile"):
+                sampling_mode="per_tile",
+                vae_decode_tiled=False, vae_decode_tile_size=512):
         import comfy.utils
         import folder_paths
         from nodes import VAEEncode, VAEDecode, common_ksampler
@@ -321,6 +327,7 @@ class VSLinx_AnimaLLLiteTiledSampler:
                     strength, start_percent, end_percent, preserve_wrapper,
                     rows, columns, overlap, overlap_x, overlap_y,
                     vae_encoder, vae_decoder,
+                    vae_decode_tiled, vae_decode_tile_size,
                 ))
                 pbar.update(1)
             return (torch.cat(results, dim=0),)
@@ -387,7 +394,8 @@ class VSLinx_AnimaLLLiteTiledSampler:
                             seed, steps, cfg, sampler_name, scheduler, denoise,
                             strength, start_percent, end_percent, preserve_wrapper,
                             rows, columns, overlap, overlap_x, overlap_y,
-                            vae_encoder, vae_decoder):
+                            vae_encoder, vae_decoder,
+                            vae_decode_tiled=False, vae_decode_tile_size=512):
         """MultiDiffusion: one sampler pass over the whole latent, tiling + LLLite
         applied per-tile and averaged in latent space at every denoising step.
 
@@ -497,6 +505,11 @@ class VSLinx_AnimaLLLiteTiledSampler:
             m, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, latent, denoise=denoise,
         )[0]
+        if vae_decode_tiled:
+            # Decode the full-image latent in tiles, so the final decode can't
+            # spike VRAM (or, on Windows, spill into slow shared system memory).
+            from nodes import VAEDecodeTiled
+            return VAEDecodeTiled().decode(vae, sampled, tile_size=vae_decode_tile_size)[0]
         return vae_decoder.decode(vae, sampled)[0]
 
 
