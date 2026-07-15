@@ -207,6 +207,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.15.1
+- fixed ``MultiDiffusion Tiled Hires Fix`` throwing ``AttributeError: 'CustomVAE' object has no attribute 'format_encoded'`` (or ``handles_tiling``) after updating to ComfyUI 0.27.0. That release added new attributes to ComfyUI's base VAE that out-of-date custom-VAE packs (e.g. [ComfyUI-VAE-Utils](https://github.com/spacepxl/ComfyUI-VAE-Utils), whose ``CustomVAE`` copies an older VAE init and never calls ``super().__init__()``) don't set, so encoding/decoding through them raised an error. The node now back-fills only the missing attributes with ComfyUI's own defaults before use; up-to-date VAEs are left untouched.
+
 ### v.1.15.0
 - ``MultiDiffusion Tiled Hires Fix`` now works with **upscale VAEs** loaded through node packs like [ComfyUI-VAE-Utils](https://github.com/spacepxl/ComfyUI-VAE-Utils) (e.g. the Wan2.1 ``upscale2x`` image VAE). These VAEs' decoders emit extra channels (``3 × k²``) that have to be ``pixel_shuffle``-d back into a ``k``-times larger RGB image — a step the stock VAE Decode doesn't do, so previously the node returned a broken multi-channel result with them. The node now auto-detects such a VAE and switches to a decode that matches that pack's own decode node (channel unshuffle + range guard), while every normal VAE keeps the exact same decode path as before. The ``vae_decode_tiled`` / ``vae_decode_tile_size`` options are honored on this path too.
 
