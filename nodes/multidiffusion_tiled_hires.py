@@ -26,6 +26,64 @@ import torch
 from .anima_lllite_tiled_sampler import _md_spans, _md_weight_1d
 
 
+def _is_upscale_vae(vae):
+    """Detect a VAE-Utils-style upscale VAE.
+
+    Packs like ComfyUI-VAE-Utils load VAEs (e.g. the Wan2.1 ``upscale2x``
+    image VAE) whose decoder emits more channels than a plain RGB image -
+    3 * k**2 channels that must be ``pixel_shuffle``-d back up into a k-times
+    larger RGB image. A normal ComfyUI VAE has no ``real_output_channels``
+    attribute (it is unique to VAE-Utils' ``CustomVAE``) and outputs 3
+    channels, so this returns False for every stock VAE and we keep the
+    original decode path untouched.
+    """
+    roc = getattr(vae, "real_output_channels", None)
+    return isinstance(roc, int) and roc != 3 and roc % 3 == 0
+
+
+def _upscale_vae_decode(vae, latent, tiled, tile_size, overlap=64):
+    """Decode with a VAE-Utils upscale VAE, mirroring that pack's own
+    ``VAE Decode (VAE Utils)`` node so the result matches what the user gets
+    outside this node.
+
+    The decoder output carries the extra (3 * k**2) channels; we normalise the
+    layout, guard the raw [-1, 1] range, and ``pixel_shuffle`` the channels back
+    into a k-times larger RGB image. ``vae.decode`` / ``vae.decode_tiled`` route
+    through the VAE's own overridden 3D decode, so ``real_output_channels`` and
+    ``process_output`` are already handled correctly inside them.
+    """
+    import torch.nn.functional as F
+
+    if tiled:
+        if tile_size < overlap * 4:
+            overlap = tile_size // 4
+        compression = vae.spacial_compression_decode()
+        images = vae.decode_tiled(
+            latent["samples"],
+            tile_x=tile_size // compression,
+            tile_y=tile_size // compression,
+            overlap=overlap // compression,
+        )
+    else:
+        images = vae.decode(latent["samples"])
+
+    if images.ndim == 5:  # collapse any temporal/batch dim into the image batch
+        images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+
+    # Safety guard mirroring VAE-Utils: if process_output wasn't applied the raw
+    # decoder output is in [-1, 1]; map it back to [0, 1] so it isn't clamped black.
+    if images.min() < -0.1:
+        images = torch.clamp((images.float() + 1.0) / 2.0, min=0.0, max=1.0)
+
+    ch = images.shape[-1]
+    if ch != 3 and ch % 3 == 0:
+        upscale = round((ch // 3) ** 0.5)
+        if upscale > 1:
+            images = F.pixel_shuffle(images.movedim(-1, 1), upscale_factor=int(upscale)).movedim(1, -1)
+
+    return images
+
+
 class VSLinx_MultiDiffusionTiledHiresFix:
     @classmethod
     def INPUT_TYPES(cls):
@@ -193,6 +251,13 @@ class VSLinx_MultiDiffusionTiledHiresFix:
             m, seed, steps, cfg, sampler_name, scheduler,
             positive, negative, latent, denoise=denoise,
         )[0]
+
+        if _is_upscale_vae(vae):
+            # VAE-Utils-style upscale VAE (e.g. Wan2.1 upscale2x): the stock VAE
+            # Decode node returns the raw multi-channel decoder output unchanged,
+            # which isn't a usable image. Decode the way that pack's own node does
+            # (pixel-shuffling the extra channels back into a larger RGB image).
+            return _upscale_vae_decode(vae, sampled, vae_decode_tiled, vae_decode_tile_size)
 
         if vae_decode_tiled:
             # Decode the full-image latent in tiles, so the final decode can't
