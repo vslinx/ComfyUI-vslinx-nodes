@@ -26,6 +26,22 @@ import torch
 from .anima_lllite_tiled_sampler import _md_spans, _md_weight_1d
 
 
+def _ensure_vae_compat(vae):
+    """Back-fill VAE attributes that a newer ComfyUI's base ``VAE.encode`` /
+    ``VAE.decode`` expect but that out-of-date custom-VAE packs don't set.
+
+    ComfyUI-VAE-Utils' ``CustomVAE`` copies an older ``VAE.__init__`` and never
+    calls ``super().__init__()``, so attributes added to the base VAE later (e.g.
+    ``handles_tiling`` / ``format_encoded`` in ComfyUI 0.27.0) are missing on it
+    and raise ``AttributeError`` the moment we encode/decode with it. We only
+    fill attributes that are actually absent, using the base VAE's own defaults,
+    so a stock / up-to-date VAE is left completely untouched.
+    """
+    for attr, default in (("handles_tiling", False), ("format_encoded", None)):
+        if not hasattr(vae, attr):
+            setattr(vae, attr, default)
+
+
 def _is_upscale_vae(vae):
     """Detect a VAE-Utils-style upscale VAE.
 
@@ -180,6 +196,10 @@ class VSLinx_MultiDiffusionTiledHiresFix:
         """One MultiDiffusion pass over the whole latent: tile + overlap-average
         the model's prediction at every denoising step."""
         from nodes import common_ksampler
+
+        # Make sure the VAE has the attributes newer ComfyUI expects, so
+        # out-of-date custom VAEs (e.g. VAE-Utils) don't AttributeError on encode/decode.
+        _ensure_vae_compat(vae)
 
         # Encode the whole image once (ComfyUI auto-tiles the VAE if it would OOM).
         latent = vae_encoder.encode(vae, img)[0]
