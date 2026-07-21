@@ -1,8 +1,9 @@
 class vsLinx_GroupBookmarks:
     DESCRIPTION = (
-        "UI-only node for bookmarking workflow groups. "
-        "Click 'Manage Bookmarks' to pick groups, then use the side panel "
-        "to jump to any bookmarked group with a single click."
+        "UI-only node for bookmarking workflow groups and individual nodes. "
+        "Click 'Manage Bookmarks' to pick whole groups or expand a group to "
+        "bookmark single nodes, then use the side panel to jump to any bookmark "
+        "with a single click."
     )
 
     @classmethod
@@ -23,5 +24,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "vsLinx_GroupBookmarks": "Group Bookmarks",
+    "vsLinx_GroupBookmarks": "Bookmarks",
 }

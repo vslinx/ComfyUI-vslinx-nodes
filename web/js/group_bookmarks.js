@@ -2,26 +2,83 @@ import { app } from "/scripts/app.js";
 
 // ── Data model ────────────────────────────────────────────────────────────────
 //
-//  node.properties.bookmarks = Array<RootItem>
+//  node.properties.bookmarks = Array<Item>   (flat, ordered)
 //
-//  RootItem  = GroupItem | SectionItem
-//  GroupItem = { type: "group",   title: string }
-//  SectionItem = { type: "section", label: string, children: GroupItem[] }
+//  Item =
+//    | { type: "group",   title: string }
+//    | { type: "node",    nodeId: string|number, name: string, parent: string }
+//    | { type: "section", label: string }
+//
+//  Sections are flat dividers: every item after a section (until the next
+//  section) visually belongs to it and is hidden when the section is collapsed.
+//  Items before the first section are always shown (top level).
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+const ACCENT = "#2f6fd0";
+const NODE_COLOR = "#d0a85c";
+const GROUP_COLOR = "#93b4dd";
+
+// ── graph helpers ───────────────────────────────────────────────────────────────
 
 function getGroups() {
   return app.graph?._groups || [];
 }
 
-function getBookmarkNodes() {
-  return (app.graph?._nodes || []).filter(n => n.type === "vsLinx_GroupBookmarks");
+function getAllNodes() {
+  return app.graph?._nodes || [];
 }
 
-// Migrate any legacy format (flat strings / old headline objects) to the new
-// nested structure. Called once when the modal opens and on onConfigure.
+function getBookmarkNodes() {
+  return getAllNodes().filter(n => n.type === "vsLinx_GroupBookmarks");
+}
+
+function nodeTitle(n) {
+  return (n.title && String(n.title).trim()) || n.type || ("Node #" + n.id);
+}
+
+function groupColor(g) {
+  return (g && typeof g.color === "string" && g.color) || GROUP_COLOR;
+}
+
+// Nodes whose centre falls inside a group's bounding box (matches ComfyUI's own
+// group-membership rule). Falls back to a manual centre-in-bounds test on older
+// frontends that lack recomputeInsideNodes().
+function groupMembers(g) {
+  try {
+    if (typeof g.recomputeInsideNodes === "function") {
+      g.recomputeInsideNodes();
+      if (Array.isArray(g._nodes)) return g._nodes;
+    }
+  } catch (e) { /* fall through to manual computation */ }
+
+  const b = g._bounding || [g.pos?.[0] ?? 0, g.pos?.[1] ?? 0, g.size?.[0] ?? 0, g.size?.[1] ?? 0];
+  return getAllNodes().filter(n => {
+    const px = n.pos?.[0] ?? 0, py = n.pos?.[1] ?? 0;
+    const sw = n.size?.[0] ?? 0, sh = n.size?.[1] ?? 0;
+    const cx = px + sw / 2, cy = py + sh / 2;
+    return cx >= b[0] && cx <= b[0] + b[2] && cy >= b[1] && cy <= b[1] + b[3];
+  });
+}
+
+// Build { members: Map<groupIndex, node[]>, ungrouped: node[] } once per modal open.
+function computeGraphSnapshot() {
+  const groups = getGroups();
+  const members = new Map();
+  const inGroup = new Set();
+  groups.forEach((g, i) => {
+    const list = groupMembers(g).filter(n => n.type !== "vsLinx_GroupBookmarks");
+    members.set(i, list);
+    for (const n of list) inGroup.add(n.id);
+  });
+  const ungrouped = getAllNodes().filter(
+    n => n.type !== "vsLinx_GroupBookmarks" && !inGroup.has(n.id)
+  );
+  return { groups, members, ungrouped };
+}
+
+// ── migration (legacy nested → flat) ────────────────────────────────────────────
+
 function migrateBookmarks(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -29,60 +86,53 @@ function migrateBookmarks(raw) {
   for (const it of raw) {
     if (!it) continue;
 
-    // ── new format already ──────────────────────────────────────────────────
-    if (it.type === "section" && Array.isArray(it.children)) {
-      out.push({
-        type: "section",
-        label: it.label ?? "",
-        children: it.children
-          .filter(c => c?.type === "group" || typeof c === "string")
-          .map(c => typeof c === "string" ? { type: "group", title: c } : { type: "group", title: c.title ?? "" }),
-      });
+    // very old: bare string
+    if (typeof it === "string") { out.push({ type: "group", title: it }); continue; }
+
+    // section / headline (legacy nested had a children array)
+    if (it.type === "section" || it.type === "headline") {
+      out.push({ type: "section", label: it.label ?? it.name ?? "" });
+      if (Array.isArray(it.children)) {
+        for (const c of it.children) {
+          if (typeof c === "string") out.push({ type: "group", title: c });
+          else if (c?.type === "node") out.push({ type: "node", nodeId: c.nodeId, name: c.name ?? "", parent: c.parent ?? "" });
+          else if (c?.type === "group" || c?.title != null) out.push({ type: "group", title: c.title ?? "" });
+        }
+      }
       continue;
     }
 
-    // ── old flat headline / section (no children array) ─────────────────────
-    if (it.type === "headline" || it.type === "section") {
-      out.push({ type: "section", label: it.label ?? "", children: [] });
-      continue;
-    }
-
-    // ── old group item (may have been "in section" by position) ─────────────
-    if (it.type === "group") {
-      out.push({ type: "group", title: it.title ?? "" });
-      continue;
-    }
-
-    // ── bare string (very old format) ────────────────────────────────────────
-    if (typeof it === "string") {
-      out.push({ type: "group", title: it });
-    }
+    if (it.type === "node") { out.push({ type: "node", nodeId: it.nodeId, name: it.name ?? "", parent: it.parent ?? "" }); continue; }
+    if (it.type === "group" || it.title != null) { out.push({ type: "group", title: it.title ?? "" }); continue; }
   }
   return out;
 }
 
-// Flat representation used by the side panel (sections expand to their children)
+// Flat, de-duplicated list across all bookmark nodes (used by the side panel).
 function collectFlatItems() {
-  const seenGroups = new Set();
+  const seenG = new Set();
+  const seenN = new Set();
   const result = [];
   for (const node of getBookmarkNodes()) {
     for (const item of migrateBookmarks(node.properties?.bookmarks)) {
       if (item.type === "section") {
         result.push({ type: "section", label: item.label });
-        for (const child of item.children) {
-          if (!seenGroups.has(child.title)) {
-            seenGroups.add(child.title);
-            result.push({ type: "group", title: child.title, inSection: true });
-          }
-        }
-      } else if (!seenGroups.has(item.title)) {
-        seenGroups.add(item.title);
-        result.push({ type: "group", title: item.title, inSection: false });
+      } else if (item.type === "node") {
+        const key = String(item.nodeId);
+        if (item.nodeId == null || seenN.has(key)) continue;
+        seenN.add(key);
+        result.push({ type: "node", nodeId: item.nodeId, name: item.name, parent: item.parent });
+      } else {
+        if (seenG.has(item.title)) continue;
+        seenG.add(item.title);
+        result.push({ type: "group", title: item.title });
       }
     }
   }
   return result;
 }
+
+// ── canvas navigation ────────────────────────────────────────────────────────
 
 function fitViewToGroup(group) {
   const canvas = app.canvas;
@@ -96,28 +146,47 @@ function fitViewToGroup(group) {
   canvas.setDirty(true, true);
 }
 
+function fitViewToNode(node) {
+  const canvas = app.canvas;
+  canvas.centerOnNode(node);
+  const cur = canvas.ds?.scale || 1;
+  const target = cur < 0.6 ? 0.8 : cur;
+  canvas.setZoom(target, [canvas.canvas.width / 2, canvas.canvas.height / 2]);
+  try { canvas.selectNode(node); } catch (e) { /* selection is best-effort */ }
+  canvas.setDirty(true, true);
+}
+
 // ── modal ─────────────────────────────────────────────────────────────────────
 
 function openBookmarkModal(node) {
   document.querySelector(".vsl-bm-overlay")?.remove();
+
+  const snapshot = computeGraphSnapshot();
 
   const overlay = document.createElement("div");
   overlay.className = "vsl-bm-overlay";
   overlay.innerHTML = `
     <div class="vsl-bm-modal">
       <div class="vsl-bm-header">
-        <span class="vsl-bm-title">Manage Group Bookmarks</span>
-        <button class="vsl-bm-close">✕</button>
+        <span class="vsl-bm-title">Manage Bookmarks</span>
+        <button class="vsl-bm-close" title="Close">×</button>
       </div>
       <div class="vsl-bm-body">
-        <div class="vsl-bm-col">
-          <div class="vsl-bm-col-title">All Groups</div>
-          <div class="vsl-bm-list" id="vsl-bm-all"></div>
+        <div class="vsl-bm-col vsl-bm-col--left">
+          <div class="vsl-bm-col-head">Groups &amp; Nodes</div>
+          <div class="vsl-bm-search-wrap">
+            <span class="vsl-bm-search-ico">⌕</span>
+            <input class="vsl-bm-search" type="text" placeholder="Search groups and nodes…" spellcheck="false" />
+            <span class="vsl-bm-search-clear" title="Clear">×</span>
+          </div>
+          <div class="vsl-bm-tree" id="vsl-bm-tree"></div>
         </div>
-        <div class="vsl-bm-divider"></div>
-        <div class="vsl-bm-col">
-          <div class="vsl-bm-col-title">Active Bookmarks</div>
-          <div class="vsl-bm-list" id="vsl-bm-active"></div>
+        <div class="vsl-bm-col vsl-bm-col--right">
+          <div class="vsl-bm-col-head vsl-bm-col-head--right">
+            <span>Active Bookmarks</span>
+            <span class="vsl-bm-count"></span>
+          </div>
+          <div class="vsl-bm-active" id="vsl-bm-active"></div>
         </div>
       </div>
       <div class="vsl-bm-footer">
@@ -128,403 +197,348 @@ function openBookmarkModal(node) {
   `;
   document.body.appendChild(overlay);
 
-  const allList    = overlay.querySelector("#vsl-bm-all");
+  const treeEl     = overlay.querySelector("#vsl-bm-tree");
   const activeList = overlay.querySelector("#vsl-bm-active");
+  const searchEl   = overlay.querySelector(".vsl-bm-search");
+  const clearEl    = overlay.querySelector(".vsl-bm-search-clear");
+  const countEl    = overlay.querySelector(".vsl-bm-count");
 
-  // Working copy – mutated in place, saved on Confirm
+  // Working copy — mutated in place, saved on Confirm
   let items = migrateBookmarks(node.properties?.bookmarks || []);
+  const expanded = new Set();   // group indices expanded in the left tree
+  let query = "";
 
-  // ── left column ────────────────────────────────────────────────────────────
+  // ── membership / "already added" checks ────────────────────────────────────
 
-  function usedTitles() {
-    const s = new Set();
-    for (const it of items) {
-      if (it.type === "group") s.add(it.title);
-      else for (const c of it.children) s.add(c.title);
-    }
-    return s;
+  function groupAdded(title) {
+    return items.some(b => b.type === "group" && b.title === title);
+  }
+  function nodeAdded(nodeId) {
+    return items.some(b => b.type === "node" && String(b.nodeId) === String(nodeId));
+  }
+  function addGroup(title) {
+    if (!title || groupAdded(title)) return;
+    items.push({ type: "group", title });
+    renderTree(); renderActive();
+  }
+  function addNodeBookmark(n, parent) {
+    if (nodeAdded(n.id)) return;
+    items.push({ type: "node", nodeId: n.id, name: nodeTitle(n), parent: parent || "" });
+    renderTree(); renderActive();
   }
 
-  function removeTitle(title) {
-    for (let i = items.length - 1; i >= 0; i--) {
-      if (items[i].type === "group" && items[i].title === title) { items.splice(i, 1); return; }
-      if (items[i].type === "section") {
-        const ci = items[i].children.findIndex(c => c.title === title);
-        if (ci !== -1) { items[i].children.splice(ci, 1); return; }
+  // ── left tree ──────────────────────────────────────────────────────────────
+
+  function makeTreeRow({ pad, chevron, onChevron, dot, label, labelColor, labelBold, count, added, showAdd, onAdd, tip }) {
+    const row = document.createElement("div");
+    row.className = "vsl-bm-tree-row";
+    row.style.paddingLeft = pad;
+    if (tip) row.title = tip;
+
+    if (chevron !== null) {
+      const c = document.createElement("span");
+      c.className = "vsl-bm-tree-chevron";
+      c.textContent = chevron;
+      c.addEventListener("click", e => { e.stopPropagation(); onChevron?.(); });
+      row.appendChild(c);
+    } else if (dot) {
+      const d = document.createElement("span");
+      d.className = "vsl-bm-tree-dot";
+      d.textContent = "◦";
+      row.appendChild(d);
+    }
+
+    const lbl = document.createElement("span");
+    lbl.className = "vsl-bm-tree-label";
+    lbl.textContent = label;
+    lbl.style.color = labelColor;
+    if (labelBold) lbl.style.fontWeight = "600";
+    if (added) lbl.style.opacity = "0.5";
+    if (onAdd) { lbl.style.cursor = "pointer"; lbl.addEventListener("click", onAdd); }
+    row.appendChild(lbl);
+
+    if (count != null) {
+      const cnt = document.createElement("span");
+      cnt.className = "vsl-bm-tree-count";
+      cnt.textContent = String(count);
+      row.appendChild(cnt);
+    }
+
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+    row.appendChild(spacer);
+
+    if (added) {
+      const chk = document.createElement("span");
+      chk.className = "vsl-bm-tree-check";
+      chk.textContent = "✓";
+      chk.title = "Already bookmarked";
+      row.appendChild(chk);
+    } else if (showAdd) {
+      const plus = document.createElement("span");
+      plus.className = "vsl-bm-tree-add";
+      plus.textContent = "+";
+      plus.addEventListener("click", e => { e.stopPropagation(); onAdd?.(); });
+      row.appendChild(plus);
+    }
+
+    treeEl.appendChild(row);
+  }
+
+  function renderTree() {
+    treeEl.innerHTML = "";
+    const q = query.trim().toLowerCase();
+    let anyRow = false;
+
+    const renderGroup = (g, gi, members, loose) => {
+      const gName = loose ? "Ungrouped nodes" : (g.title || "(untitled)");
+      const gMatch = !q || gName.toLowerCase().includes(q);
+      const matched = members.filter(n => nodeTitle(n).toLowerCase().includes(q));
+      if (q && !gMatch && matched.length === 0) return;
+
+      anyRow = true;
+      const isExpanded = q ? true : expanded.has(gi);
+      const gAdded = !loose && groupAdded(gName);
+
+      makeTreeRow({
+        pad: "4px",
+        chevron: members.length ? (isExpanded ? "▾" : "▸") : "·",
+        onChevron: () => { expanded.has(gi) ? expanded.delete(gi) : expanded.add(gi); renderTree(); },
+        label: gName,
+        labelColor: loose ? "#8b95a5" : groupColor(g),
+        labelBold: true,
+        count: loose ? null : members.length,
+        added: gAdded,
+        showAdd: !loose && !gAdded,
+        onAdd: loose ? null : () => addGroup(gName),
+        tip: loose ? "Ungrouped nodes — bookmark them individually"
+                   : (gAdded ? "Group already bookmarked" : "Click to bookmark the whole group"),
+      });
+
+      if (isExpanded) {
+        const list = (q && !gMatch) ? matched : members;
+        for (const n of list) {
+          const nAdded = nodeAdded(n.id);
+          makeTreeRow({
+            pad: "26px",
+            chevron: null,
+            dot: true,
+            label: nodeTitle(n),
+            labelColor: "#c2c9d4",
+            labelBold: false,
+            count: null,
+            added: nAdded,
+            showAdd: !nAdded,
+            onAdd: () => addNodeBookmark(n, loose ? "" : gName),
+            tip: nAdded ? "Node already bookmarked" : "Click to bookmark just this node",
+          });
+        }
       }
-    }
-  }
+    };
 
-  function renderAll() {
-    allList.innerHTML = "";
-    const used = usedTitles();
-    const groups = getGroups();
-    if (!groups.length) {
+    snapshot.groups.forEach((g, gi) => renderGroup(g, gi, snapshot.members.get(gi) || [], false));
+    if (snapshot.ungrouped.length) renderGroup(null, "__ungrouped", snapshot.ungrouped, true);
+
+    if (!anyRow) {
       const e = document.createElement("div");
       e.className = "vsl-bm-empty";
-      e.textContent = "No groups found in this workflow.";
-      allList.appendChild(e); return;
-    }
-    for (const g of groups) {
-      const title = g.title || "";
-      const active = used.has(title);
-      const el = document.createElement("div");
-      el.className = "vsl-bm-item" + (active ? " vsl-bm-item--selected" : "");
-      el.textContent = title || "(untitled)";
-      el.title = active ? "Click to remove" : "Click to add";
-      el.addEventListener("click", () => {
-        active ? removeTitle(title) : items.push({ type: "group", title });
-        renderAll(); renderActive();
-      });
-      allList.appendChild(el);
+      e.textContent = q
+        ? `No groups or nodes match “${query}”.`
+        : "No groups or nodes in this workflow.";
+      treeEl.appendChild(e);
     }
   }
 
-  // ── drag state ─────────────────────────────────────────────────────────────
+  // ── drag-to-reorder (flat) ─────────────────────────────────────────────────
 
-  const drag = {
-    active: false,
-    item: null,       // the data object being dragged
-    isSection: false, // true if dragging a whole section
-    path: null,       // { level:"root", idx } | { level:"child", sectionIdx, childIdx }
-    ghostEl: null,
-    indicatorEl: null,
-    dropTarget: null,
-  };
+  const drag = { active: false, fromIdx: -1, ghostEl: null, indicatorEl: null, before: -1 };
 
-  // ── drop target computation ────────────────────────────────────────────────
-
-  // Returns the rendered rows (excluding the dragging row)
   function liveRows() {
-    return [...activeList.querySelectorAll("[data-row]")]
+    return [...activeList.querySelectorAll("[data-idx]")]
       .filter(r => !r.classList.contains("vsl-bm-row--dragging"));
   }
 
-  // Given mouse Y, figure out exactly where to insert
-  function computeTarget(mouseY) {
-    const rows = liveRows();
-    if (!rows.length) return { type: "root", index: 0 };
-
-    // Find the row whose midpoint is closest to mouseY
-    let best = rows[0];
-    let bestDist = Infinity;
-    for (const r of rows) {
+  // Returns the original index to insert *before*, or items.length for the end.
+  function computeBefore(mouseY) {
+    for (const r of liveRows()) {
       const rect = r.getBoundingClientRect();
-      const mid  = rect.top + rect.height / 2;
-      const d    = Math.abs(mouseY - mid);
-      if (d < bestDist) { bestDist = d; best = r; }
+      if (mouseY < rect.top + rect.height / 2) return parseInt(r.dataset.idx);
     }
-
-    const rect = best.getBoundingClientRect();
-    const relY = Math.max(0, Math.min(1, (mouseY - rect.top) / rect.height));
-    const kind = best.dataset.row;
-
-    if (kind === "section") {
-      if (drag.isSection) {
-        // Sections stay at root — before/after only
-        const idx = parseInt(best.dataset.idx);
-        return { type: "root", index: relY < 0.5 ? idx : idx + 1 };
-      }
-      // Upper third → before section; rest → into section
-      if (relY < 0.33) return { type: "root", index: parseInt(best.dataset.idx) };
-      return { type: "into-section", sectionIdx: parseInt(best.dataset.idx) };
-    }
-
-    if (kind === "root-group") {
-      const idx = parseInt(best.dataset.idx);
-      return { type: "root", index: relY < 0.5 ? idx : idx + 1 };
-    }
-
-    if (kind === "child") {
-      if (drag.isSection) {
-        // Can't nest sections — snap to root level around this section
-        const sIdx = parseInt(best.dataset.secIdx);
-        return { type: "root", index: relY < 0.5 ? sIdx : sIdx + 1 };
-      }
-      const sIdx = parseInt(best.dataset.secIdx);
-      const cIdx = parseInt(best.dataset.childIdx);
-      return { type: "child", sectionIdx: sIdx, childIndex: relY < 0.5 ? cIdx : cIdx + 1 };
-    }
-
-    return { type: "root", index: items.length };
+    return items.length;
   }
 
-  // ── visual indicator ───────────────────────────────────────────────────────
-
-  function clearHighlights() {
-    activeList.querySelectorAll(".vsl-bm-section-over").forEach(el => el.classList.remove("vsl-bm-section-over"));
-  }
-
-  function applyIndicator(target) {
-    clearHighlights();
+  function applyIndicator(before) {
     const ind = drag.indicatorEl;
-
-    if (!target) { ind.style.display = "none"; return; }
-
-    if (target.type === "into-section") {
-      ind.style.display = "none";
-      const secEl = activeList.querySelector(`[data-row="section"][data-idx="${target.sectionIdx}"]`);
-      if (secEl) {
-        secEl.classList.add("vsl-bm-section-over");
-        // Also highlight visible children
-        activeList.querySelectorAll(`[data-row="child"][data-sec-idx="${target.sectionIdx}"]`)
-          .forEach(el => el.classList.add("vsl-bm-section-over"));
-      }
-      return;
-    }
-
-    // Position the line indicator
+    if (!ind) return;
     const rows = liveRows();
-    let refEl = null, insertBefore = true;
-
-    if (target.type === "root") {
-      const rootRows = rows.filter(r => r.dataset.row === "root-group" || r.dataset.row === "section");
-      if (target.index >= rootRows.length) {
-        refEl = rootRows[rootRows.length - 1]; insertBefore = false;
-      } else {
-        refEl = rootRows[target.index]; insertBefore = true;
-      }
-    } else if (target.type === "child") {
-      const childRows = rows.filter(r =>
-        r.dataset.row === "child" && parseInt(r.dataset.secIdx) === target.sectionIdx);
-      if (target.childIndex >= childRows.length) {
-        refEl = childRows[childRows.length - 1]; insertBefore = false;
-      } else {
-        refEl = childRows[target.childIndex]; insertBefore = true;
-      }
-      // Fallback: place after section header if no children yet
-      if (!refEl) {
-        refEl = activeList.querySelector(`[data-row="section"][data-idx="${target.sectionIdx}"]`);
-        insertBefore = false;
-      }
-    }
-
-    if (refEl) {
-      insertBefore ? activeList.insertBefore(ind, refEl) : refEl.after(ind);
-      ind.style.display = "";
-    } else if (!rows.length) {
+    if (before >= items.length || !rows.length) {
       activeList.appendChild(ind);
-      ind.style.display = "";
     } else {
-      ind.style.display = "none";
+      const ref = activeList.querySelector(`[data-idx="${before}"]`);
+      ref ? activeList.insertBefore(ind, ref) : activeList.appendChild(ind);
     }
+    ind.style.display = "";
   }
 
-  // ── perform the actual drop ────────────────────────────────────────────────
-
-  function performDrop(target) {
-    if (!target || !drag.item) return;
-
-    // 1. Remove from source
-    if (drag.path.level === "root") {
-      items.splice(drag.path.idx, 1);
-    } else {
-      items[drag.path.sectionIdx].children.splice(drag.path.childIdx, 1);
-    }
-
-    // 2. Adjust target indices for the removal
-    const t = { ...target };
-    if (drag.path.level === "root") {
-      if (t.type === "root" && t.index > drag.path.idx) t.index--;
-      if (t.type === "into-section" && t.sectionIdx > drag.path.idx) t.sectionIdx--;
-      if (t.type === "child" && t.sectionIdx > drag.path.idx) t.sectionIdx--;
-    } else {
-      // Removed from a section's children — only affects child targets in the same section
-      if (t.type === "child" && t.sectionIdx === drag.path.sectionIdx
-          && t.childIndex > drag.path.childIdx) {
-        t.childIndex--;
-      }
-    }
-
-    // 3. Insert at new position
-    if (t.type === "root") {
-      items.splice(Math.min(t.index, items.length), 0, drag.item);
-    } else if (t.type === "child") {
-      const sec = items[t.sectionIdx];
-      if (sec) sec.children.splice(Math.min(t.childIndex, sec.children.length), 0, drag.item);
-    } else if (t.type === "into-section") {
-      const sec = items[t.sectionIdx];
-      if (sec) sec.children.push(drag.item);
-    }
+  function performMove(fromIdx, before) {
+    const [it] = items.splice(fromIdx, 1);
+    let target = before > fromIdx ? before - 1 : before;
+    target = Math.max(0, Math.min(target, items.length));
+    items.splice(target, 0, it);
   }
 
-  // ── drag start ─────────────────────────────────────────────────────────────
-
-  function startDrag(e, rowEl, item, path) {
+  function startDrag(e, rowEl, idx) {
     e.preventDefault();
+    drag.active = true;
+    drag.fromIdx = idx;
+    drag.before = -1;
 
-    drag.active    = true;
-    drag.item      = item;
-    drag.isSection = item.type === "section";
-    drag.path      = path;
-    drag.dropTarget = null;
-
-    // Ghost — fixed clone that follows cursor
     const ghost = rowEl.cloneNode(true);
     ghost.className = "vsl-bm-drag-ghost";
     ghost.style.width = rowEl.offsetWidth + "px";
     document.body.appendChild(ghost);
     drag.ghostEl = ghost;
 
-    // Drop indicator line
     drag.indicatorEl = document.createElement("div");
     drag.indicatorEl.className = "vsl-bm-drop-indicator";
     drag.indicatorEl.style.display = "none";
     activeList.appendChild(drag.indicatorEl);
 
-    // Grab offset so cursor stays in the same spot on the ghost
     const rect = rowEl.getBoundingClientRect();
     const offX = e.clientX - rect.left;
     const offY = e.clientY - rect.top;
-
     ghost.style.left = (e.clientX - offX) + "px";
     ghost.style.top  = (e.clientY - offY) + "px";
-
     rowEl.classList.add("vsl-bm-row--dragging");
 
     const onMove = ev => {
       ghost.style.left = (ev.clientX - offX) + "px";
       ghost.style.top  = (ev.clientY - offY) + "px";
-      drag.dropTarget = computeTarget(ev.clientY);
-      applyIndicator(drag.dropTarget);
+      drag.before = computeBefore(ev.clientY);
+      applyIndicator(drag.before);
     };
-
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup",   onUp);
-
+      document.removeEventListener("mouseup", onUp);
       ghost.remove();
       drag.indicatorEl?.remove();
-      clearHighlights();
       rowEl.classList.remove("vsl-bm-row--dragging");
-
-      if (drag.dropTarget) performDrop(drag.dropTarget);
-
+      if (drag.before >= 0) performMove(drag.fromIdx, drag.before);
       drag.active = false;
       drag.ghostEl = null;
       drag.indicatorEl = null;
-
-      renderAll();
-      renderActive();
+      renderTree(); renderActive();
     };
-
     document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup",   onUp);
+    document.addEventListener("mouseup", onUp);
   }
 
-  // ── right column rendering ─────────────────────────────────────────────────
+  // ── right column ────────────────────────────────────────────────────────────
 
-  function makeHandle() {
+  function makeHandle(rowEl, idx) {
     const h = document.createElement("span");
     h.className = "vsl-bm-drag-handle";
     h.textContent = "⠿";
+    h.title = "Drag to reorder";
+    h.addEventListener("mousedown", e => startDrag(e, rowEl, idx));
     return h;
   }
 
   function makeRemoveBtn(cb) {
     const b = document.createElement("button");
     b.className = "vsl-bm-item-remove";
-    b.textContent = "✕";
+    b.textContent = "×";
+    b.title = "Remove";
     b.addEventListener("click", e => { e.stopPropagation(); cb(); });
     return b;
   }
 
-  function renderGroupRow(item, rootIdx) {
+  function renderSectionRow(item, idx) {
     const el = document.createElement("div");
-    el.className = "vsl-bm-row vsl-bm-row--group";
-    el.dataset.row = "root-group";
-    el.dataset.idx = rootIdx;
+    el.className = "vsl-bm-sec";
+    el.dataset.idx = idx;
 
-    const handle = makeHandle();
-    handle.addEventListener("mousedown", e => startDrag(e, el, item, { level: "root", idx: rootIdx }));
+    const handle = makeHandle(el, idx);
 
     const label = document.createElement("span");
-    label.className = "vsl-bm-item-label";
-    label.textContent = item.title || "(untitled)";
+    label.className = "vsl-bm-sec-label";
+    label.contentEditable = "true";
+    label.spellcheck = false;
+    label.textContent = item.label || "";
+    label.title = "Click to rename section";
+    label.addEventListener("input", () => { item.label = label.textContent; });
+    label.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); label.blur(); } });
+    label.addEventListener("mousedown", e => e.stopPropagation());
 
-    el.append(handle, label, makeRemoveBtn(() => {
-      items.splice(rootIdx, 1); renderAll(); renderActive();
-    }));
+    const line = document.createElement("span");
+    line.className = "vsl-bm-sec-line";
+
+    el.append(handle, label, line, makeRemoveBtn(() => { items.splice(idx, 1); renderTree(); renderActive(); }));
     activeList.appendChild(el);
   }
 
-  function renderChildRow(item, sectionIdx, childIdx) {
+  function renderItemRow(item, idx) {
+    const isGroup = item.type === "group";
     const el = document.createElement("div");
-    el.className = "vsl-bm-row vsl-bm-row--child";
-    el.dataset.row      = "child";
-    el.dataset.secIdx   = sectionIdx;
-    el.dataset.childIdx = childIdx;
+    el.className = "vsl-bm-card";
+    el.dataset.idx = idx;
 
-    const handle = makeHandle();
-    handle.addEventListener("mousedown", e =>
-      startDrag(e, el, item, { level: "child", sectionIdx, childIdx }));
+    const handle = makeHandle(el, idx);
 
-    const label = document.createElement("span");
-    label.className = "vsl-bm-item-label";
-    label.textContent = item.title || "(untitled)";
+    const tag = document.createElement("span");
+    tag.className = "vsl-bm-tag " + (isGroup ? "vsl-bm-tag--group" : "vsl-bm-tag--node");
+    tag.textContent = isGroup ? "GROUP" : "NODE";
 
-    el.append(handle, label, makeRemoveBtn(() => {
-      items[sectionIdx].children.splice(childIdx, 1); renderAll(); renderActive();
-    }));
-    activeList.appendChild(el);
-  }
+    const body = document.createElement("div");
+    body.className = "vsl-bm-card-body";
 
-  function renderSectionRow(item, rootIdx) {
-    const el = document.createElement("div");
-    el.className = "vsl-bm-row vsl-bm-row--section";
-    el.dataset.row = "section";
-    el.dataset.idx = rootIdx;
+    const name = document.createElement("div");
+    name.className = "vsl-bm-card-name";
+    name.textContent = isGroup ? (item.title || "(untitled)") : (item.name || "(untitled)");
+    body.appendChild(name);
 
-    const handle = makeHandle();
-    handle.addEventListener("mousedown", e => startDrag(e, el, item, { level: "root", idx: rootIdx }));
+    if (!isGroup && item.parent) {
+      const parent = document.createElement("div");
+      parent.className = "vsl-bm-card-parent";
+      parent.textContent = "in " + item.parent;
+      body.appendChild(parent);
+    }
 
-    const icon = document.createElement("span");
-    icon.className = "vsl-bm-section-icon";
-    icon.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="display:block"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.764c.415 0 .813.165 1.107.46L8.742 3.8a.5.5 0 0 0 .356.147H13.5A1.5 1.5 0 0 1 15 5.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/></svg>`;
-
-    const labelEl = document.createElement("span");
-    labelEl.className = "vsl-bm-section-label";
-    labelEl.contentEditable = "true";
-    labelEl.spellcheck = false;
-    labelEl.textContent = item.label || "";
-    labelEl.title = "Click to rename section";
-    labelEl.addEventListener("input",   () => { item.label = labelEl.textContent; });
-    labelEl.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); labelEl.blur(); } });
-    labelEl.addEventListener("mousedown", e => e.stopPropagation());
-
-    el.append(handle, icon, labelEl, makeRemoveBtn(() => {
-      items.splice(rootIdx, 1); renderAll(); renderActive();
-    }));
+    el.append(handle, tag, body, makeRemoveBtn(() => { items.splice(idx, 1); renderTree(); renderActive(); }));
     activeList.appendChild(el);
   }
 
   function renderActive() {
     activeList.innerHTML = "";
+    const itemCount = items.filter(b => b.type !== "section").length;
+    countEl.textContent = itemCount ? (itemCount + (itemCount === 1 ? " item" : " items")) : "";
+
     if (!items.length) {
       const e = document.createElement("div");
-      e.className = "vsl-bm-empty";
-      e.textContent = "No bookmarks yet.\nClick groups on the left to add them.";
-      activeList.appendChild(e); return;
+      e.className = "vsl-bm-empty vsl-bm-empty--active";
+      e.innerHTML = `No bookmarks yet.<br/>Click a <b style="color:${GROUP_COLOR}">group</b> or expand it to bookmark a single <b style="color:${NODE_COLOR}">node</b>.`;
+      activeList.appendChild(e);
+      return;
     }
-    items.forEach((item, rootIdx) => {
-      if (item.type === "section") {
-        renderSectionRow(item, rootIdx);
-        item.children.forEach((child, childIdx) => renderChildRow(child, rootIdx, childIdx));
-      } else {
-        renderGroupRow(item, rootIdx);
-      }
+
+    items.forEach((item, idx) => {
+      if (item.type === "section") renderSectionRow(item, idx);
+      else renderItemRow(item, idx);
     });
   }
 
-  renderAll();
-  renderActive();
+  // ── wire up ──────────────────────────────────────────────────────────────────
 
-  // ── footer ─────────────────────────────────────────────────────────────────
+  function syncClear() { clearEl.style.display = query ? "" : "none"; }
+
+  searchEl.addEventListener("input", () => { query = searchEl.value; syncClear(); renderTree(); });
+  clearEl.addEventListener("click", () => { query = ""; searchEl.value = ""; syncClear(); renderTree(); searchEl.focus(); });
+  syncClear();
 
   overlay.querySelector(".vsl-bm-btn-add-section").addEventListener("click", () => {
-    items.push({ type: "section", label: "New Section", children: [] });
+    items.push({ type: "section", label: "New Section" });
     renderActive();
-    const labels = activeList.querySelectorAll(".vsl-bm-section-label");
+    const labels = activeList.querySelectorAll(".vsl-bm-sec-label");
     const last = labels[labels.length - 1];
     if (last) {
       last.focus();
@@ -544,16 +558,20 @@ function openBookmarkModal(node) {
     bookmarkPanel?.update();
     overlay.remove();
   });
+
+  renderTree();
+  renderActive();
+  searchEl.focus();
 }
 
 // ── side panel ────────────────────────────────────────────────────────────────
 
 class BookmarkPanel {
   constructor() {
-    this._visible  = true;
-    this._el       = null;
-    this._list     = null;
-    this._icon     = null;
+    this._visible   = true;
+    this._el        = null;
+    this._list      = null;
+    this._icon      = null;
     this._collapsed = new Set();
     this._injectStyles();
     this._build();
@@ -569,6 +587,10 @@ class BookmarkPanel {
       <div class="vsl-bm-panel-inner">
         <div class="vsl-bm-panel-header">Bookmarks</div>
         <div class="vsl-bm-panel-list"></div>
+        <div class="vsl-bm-panel-legend">
+          <span class="vsl-bm-legend-item"><span class="vsl-bm-glyph vsl-bm-glyph--group"></span>Group</span>
+          <span class="vsl-bm-legend-item"><span class="vsl-bm-glyph vsl-bm-glyph--node"></span>Node</span>
+        </div>
       </div>
     `;
     document.body.appendChild(panel);
@@ -586,7 +608,6 @@ class BookmarkPanel {
     this._saveCollapsed();
   }
 
-  // Load panel UI state from the first bookmark node's properties.
   loadCollapsed(node) {
     const src = node || getBookmarkNodes()[0];
     if (!src) return;
@@ -599,7 +620,6 @@ class BookmarkPanel {
     }
   }
 
-  // Persist current panel UI state to all bookmark nodes so it's saved with the workflow.
   _saveCollapsed() {
     for (const node of getBookmarkNodes()) {
       node.properties = node.properties || {};
@@ -609,29 +629,22 @@ class BookmarkPanel {
   }
 
   update() {
-    const flatItems  = collectFlatItems();
-    const hasNodes   = getBookmarkNodes().length > 0;
-    const hasGroups  = flatItems.some(i => i.type === "group");
+    const flatItems = collectFlatItems();
+    const hasNodes  = getBookmarkNodes().length > 0;
+    const hasItems  = flatItems.some(i => i.type !== "section");
 
-    if (!hasNodes || !hasGroups) { this._el.style.display = "none"; return; }
+    if (!hasNodes || !hasItems) { this._el.style.display = "none"; return; }
     this._el.style.display = "";
     this._list.innerHTML = "";
 
-    const graphs = getGroups();
+    const groups = getGroups();
+    let inSection = false;         // are we currently under a section?
     let sectionCollapsed = false;
-    let prevWasChild = false;
 
-    flatItems.forEach((item, idx) => {
+    flatItems.forEach(item => {
       if (item.type === "section") {
-        // Section-end separator after visible children
-        if (prevWasChild) {
-          const sep = document.createElement("div");
-          sep.className = "vsl-bm-panel-section-end";
-          this._list.appendChild(sep);
-        }
-        prevWasChild = false;
-
         const key = item.label || "";
+        inSection = true;
         sectionCollapsed = this._collapsed.has(key);
 
         const el = document.createElement("div");
@@ -639,9 +652,10 @@ class BookmarkPanel {
 
         const chevron = document.createElement("span");
         chevron.className = "vsl-bm-panel-headline-chevron";
-        chevron.textContent = sectionCollapsed ? "▶" : "▼";
+        chevron.textContent = sectionCollapsed ? "▸" : "▾";
 
         const lbl = document.createElement("span");
+        lbl.className = "vsl-bm-panel-headline-label";
         lbl.textContent = key;
 
         el.append(chevron, lbl);
@@ -652,44 +666,45 @@ class BookmarkPanel {
           this.update();
         });
         this._list.appendChild(el);
-
-      } else {
-        // group item
-        if (item.inSection && !sectionCollapsed) {
-          // Section-end separator when transitioning back to root
-          const next = flatItems[idx + 1];
-          const nextIsRootGroup = next && next.type === "group" && !next.inSection;
-          // We'll handle it at the next section/root item boundary — tracked via prevWasChild
-
-          const group = graphs.find(g => g.title === item.title);
-          const el = document.createElement("div");
-          el.className = "vsl-bm-panel-item vsl-bm-panel-item--child" +
-            (group ? "" : " vsl-bm-panel-item--missing");
-          el.textContent = item.title || "(untitled)";
-          el.title = group ? `Jump to: ${item.title}` : `"${item.title}" not found`;
-          if (group) el.addEventListener("click", () => fitViewToGroup(group));
-          this._list.appendChild(el);
-          prevWasChild = true;
-
-        } else if (!item.inSection) {
-          // Root group — add section-end separator if previous were children
-          if (prevWasChild) {
-            const sep = document.createElement("div");
-            sep.className = "vsl-bm-panel-section-end";
-            this._list.appendChild(sep);
-          }
-          prevWasChild = false;
-
-          const group = graphs.find(g => g.title === item.title);
-          const el = document.createElement("div");
-          el.className = "vsl-bm-panel-item" + (group ? "" : " vsl-bm-panel-item--missing");
-          el.textContent = item.title || "(untitled)";
-          el.title = group ? `Jump to: ${item.title}` : `"${item.title}" not found`;
-          if (group) el.addEventListener("click", () => fitViewToGroup(group));
-          this._list.appendChild(el);
-        }
-        // else: item is in a collapsed section — skip
+        return;
       }
+
+      // group / node item
+      if (inSection && sectionCollapsed) return;   // hidden under a collapsed section
+
+      const isNode = item.type === "node";
+      let target, missing, label;
+      if (isNode) {
+        target = app.graph?.getNodeById?.(item.nodeId);
+        missing = !target;
+        label = target ? nodeTitle(target) : (item.name || "(untitled)");
+      } else {
+        target = groups.find(g => g.title === item.title);
+        missing = !target;
+        label = item.title || "(untitled)";
+      }
+
+      const el = document.createElement("div");
+      el.className = "vsl-bm-panel-item" + (missing ? " vsl-bm-panel-item--missing" : "");
+
+      const glyphWrap = document.createElement("span");
+      glyphWrap.className = "vsl-bm-glyph-wrap";
+      const glyph = document.createElement("span");
+      glyph.className = "vsl-bm-glyph " + (isNode ? "vsl-bm-glyph--node" : "vsl-bm-glyph--group");
+      glyphWrap.appendChild(glyph);
+
+      const lbl = document.createElement("span");
+      lbl.className = "vsl-bm-panel-item-label";
+      lbl.textContent = label;
+
+      el.append(glyphWrap, lbl);
+      el.title = missing
+        ? `"${label}" not found`
+        : (isNode ? `Jump to node: ${label}` : `Jump to group: ${label}`);
+      if (!missing) {
+        el.addEventListener("click", () => isNode ? fitViewToNode(target) : fitViewToGroup(target));
+      }
+      this._list.appendChild(el);
     });
   }
 
@@ -715,8 +730,7 @@ const CSS = `
   flex-direction: row;
   align-items: stretch;
   z-index: 1000;
-  font-family: var(--p-font-family, "Inter", system-ui, sans-serif);
-  font-size: 13px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   pointer-events: all;
 }
 .vsl-bm-panel-toggle {
@@ -724,24 +738,25 @@ const CSS = `
   align-items: center;
   justify-content: center;
   width: 16px;
-  background: var(--comfy-menu-bg, #1e1e1e);
-  border: 1px solid var(--border-color, #3d3d3d);
+  min-height: 46px;
+  background: #252d3a;
+  border: 1px solid #38414f;
   border-right: none;
   border-radius: 6px 0 0 6px;
   cursor: pointer;
-  padding: 18px 1px;
-  color: var(--input-text, #b0b0b0);
+  color: #aeb7c4;
+  font-size: 14px;
   user-select: none;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
 }
-.vsl-bm-panel-toggle:hover { background: var(--comfy-input-bg, #2a2a2a); color: #fff; }
-.vsl-bm-toggle-icon { font-size: 9px; line-height: 1; }
+.vsl-bm-panel-toggle:hover { background: #2d3644; color: #e6ebf2; }
+.vsl-bm-toggle-icon { line-height: 1; }
 
 .vsl-bm-panel-inner {
-  width: 170px;
-  background: var(--comfy-menu-bg, #1e1e1e);
-  border: 1px solid var(--border-color, #3d3d3d);
+  width: 256px;
+  background: #1c2230;
+  border: 1px solid #2b3444;
   border-right: none;
   border-radius: 6px 0 0 6px;
   display: flex;
@@ -750,293 +765,381 @@ const CSS = `
   max-height: 55vh;
 }
 .vsl-bm-panel-header {
-  padding: 7px 10px;
-  font-size: 10px;
+  padding: 14px 16px 10px;
+  font-size: 11px;
   font-weight: 700;
+  line-height: 1;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--input-text, #888);
-  border-bottom: 1px solid var(--border-color, #3d3d3d);
-  background: var(--comfy-input-bg, #252525);
+  letter-spacing: 0.12em;
+  color: #8b95a5;
   flex-shrink: 0;
 }
 .vsl-bm-panel-list {
   overflow-y: auto;
   flex: 1;
   scrollbar-width: thin;
-  scrollbar-color: var(--border-color, #444) transparent;
-  padding: 2px 0;
+  scrollbar-color: #38414f transparent;
+  padding: 0 7px 12px;
 }
+/* Items (groups & nodes share the same layout — only the glyph differs) */
 .vsl-bm-panel-item {
-  padding: 7px 10px;
-  color: var(--input-text, #c0c0c0);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 8px 7px 26px;
+  border-radius: 6px;
   cursor: pointer;
-  white-space: nowrap;
+  transition: background 0.1s;
+}
+.vsl-bm-panel-item:hover { background: #262d3a; }
+.vsl-bm-panel-item-label {
+  color: #c9d0da;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background 0.1s, color 0.1s;
-  font-size: 12px;
+  white-space: nowrap;
 }
-.vsl-bm-panel-item:hover { background: var(--comfy-input-bg, #2a2a2a); color: #fff; }
-.vsl-bm-panel-item--child {
-  padding-left: 18px;
-  border-left: 2px solid rgba(74,158,255,0.25);
-  font-size: 11px;
-}
-.vsl-bm-panel-item--child:hover { border-left-color: rgba(74,158,255,0.55); }
-.vsl-bm-panel-item--missing { opacity: 0.38; cursor: default; font-style: italic; }
-.vsl-bm-panel-item--missing:hover { background: none; color: inherit; }
+.vsl-bm-panel-item--missing { opacity: 0.4; cursor: default; font-style: italic; }
+.vsl-bm-panel-item--missing:hover { background: none; }
 
-.vsl-bm-panel-section-end {
-  height: 0;
-  border-top: 1px solid rgba(74,158,255,0.15);
-  margin: 1px 8px 2px 8px;
+.vsl-bm-glyph-wrap {
+  width: 12px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.vsl-bm-panel-section-end + .vsl-bm-panel-headline { border-top: none; }
+.vsl-bm-glyph--group {
+  width: 11px; height: 11px;
+  border-radius: 3px;
+  border: 1.5px solid ${GROUP_COLOR};
+}
+.vsl-bm-glyph--node {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: ${NODE_COLOR};
+}
 
+/* Section headers */
 .vsl-bm-panel-headline {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 8px 8px 4px;
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--input-text, #777);
-  border-top: 1px solid var(--border-color, #3d3d3d);
+  gap: 8px;
+  padding: 9px 8px 5px;
   cursor: pointer;
   user-select: none;
-  transition: color 0.1s;
-  white-space: nowrap;
+  transition: opacity 0.1s;
   overflow: hidden;
 }
-.vsl-bm-panel-headline:first-child { border-top: none; padding-top: 7px; }
-.vsl-bm-panel-headline:hover { color: var(--input-text, #aaa); }
-.vsl-bm-panel-headline--collapsed { color: var(--input-text, #555); }
-.vsl-bm-panel-headline-chevron { font-size: 7px; opacity: 0.7; flex-shrink: 0; }
+.vsl-bm-panel-headline:hover { opacity: 0.85; }
+.vsl-bm-panel-headline-chevron {
+  color: #8b95a5;
+  font-size: 14px;
+  width: 12px;
+  flex: none;
+  text-align: center;
+  line-height: 1;
+}
+.vsl-bm-panel-headline-label {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  color: #8b95a5;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vsl-bm-panel-headline--collapsed .vsl-bm-panel-headline-label { color: #6f7a8a; }
+
+/* Legend */
+.vsl-bm-panel-legend {
+  padding: 9px 12px;
+  border-top: 1px solid #2b3444;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.vsl-bm-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #7a8598;
+  font-size: 11px;
+}
 
 /* ── Modal ──────────────────────────────────────────────────────── */
 .vsl-bm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.65);
+  background: rgba(0,0,0,0.6);
   z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--p-font-family, "Inter", system-ui, sans-serif);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 .vsl-bm-modal {
-  background: var(--comfy-menu-bg, #1e1e1e);
-  border: 1px solid var(--border-color, #3d3d3d);
-  border-radius: 8px;
-  width: 580px;
+  width: 660px;
   max-width: 92vw;
   max-height: 82vh;
+  background: #1c2230;
+  border: 1px solid #333b47;
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.55);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  color: #d9dee6;
 }
 .vsl-bm-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--border-color, #3d3d3d);
-  background: var(--comfy-input-bg, #252525);
+  padding: 16px 20px;
+  background: #252d3a;
+  border-bottom: 1px solid #38414f;
   flex-shrink: 0;
 }
-.vsl-bm-title { font-size: 13px; font-weight: 600; color: var(--input-text, #d0d0d0); }
+.vsl-bm-title { font-size: 16px; font-weight: 600; letter-spacing: 0.2px; color: #e6ebf2; }
 .vsl-bm-close {
-  background: none; border: none; color: var(--input-text, #888);
-  cursor: pointer; font-size: 13px; padding: 3px 7px; border-radius: 4px;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 6px;
+  color: #8b95a5; cursor: pointer; font-size: 18px; line-height: 1;
   transition: background 0.1s, color 0.1s;
 }
-.vsl-bm-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.vsl-bm-close:hover { background: #333b47; color: #cdd4de; }
 
-.vsl-bm-body { display: flex; flex: 1; overflow: hidden; min-height: 260px; }
-.vsl-bm-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.vsl-bm-col-title {
-  padding: 7px 12px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  font-weight: 700;
-  color: var(--input-text, #888);
-  border-bottom: 1px solid var(--border-color, #2e2e2e);
-  background: rgba(255,255,255,0.015);
+.vsl-bm-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 1;
+  min-height: 300px;
+  overflow: hidden;
+}
+.vsl-bm-col { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.vsl-bm-col--left { border-right: 1px solid #333b47; }
+.vsl-bm-col-head {
+  padding: 12px 14px 10px;
+  font-size: 11px; font-weight: 600; letter-spacing: 1.2px;
+  color: #6f7a8a; text-transform: uppercase;
   flex-shrink: 0;
 }
-.vsl-bm-divider { width: 1px; background: var(--border-color, #3d3d3d); flex-shrink: 0; }
-.vsl-bm-list {
+.vsl-bm-col-head--right {
+  padding: 12px 16px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.vsl-bm-count { font-size: 11px; color: #5f6a7a; letter-spacing: 0; text-transform: none; font-weight: 400; }
+
+/* Search */
+.vsl-bm-search-wrap { position: relative; padding: 0 14px 10px; flex-shrink: 0; }
+.vsl-bm-search-ico {
+  position: absolute; left: 24px; top: 50%; transform: translateY(-60%);
+  color: #5f6a7a; font-size: 13px; pointer-events: none;
+}
+.vsl-bm-search {
+  width: 100%;
+  background: #141922;
+  border: 1px solid #333b47;
+  border-radius: 7px;
+  padding: 8px 30px 8px 28px;
+  color: #cdd4de;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+.vsl-bm-search:focus { border-color: #3f6fb5; }
+.vsl-bm-search::placeholder { color: #5f6a7a; }
+.vsl-bm-search-clear {
+  position: absolute; right: 23px; top: 50%; transform: translateY(-60%);
+  color: #6f7a8a; font-size: 14px; cursor: pointer; line-height: 1;
+}
+.vsl-bm-search-clear:hover { color: #cdd4de; }
+
+/* Left tree */
+.vsl-bm-tree {
   flex: 1;
   overflow-y: auto;
+  padding: 0 8px 10px;
+  min-height: 0;
   scrollbar-width: thin;
-  scrollbar-color: var(--border-color, #444) transparent;
-  position: relative;
+  scrollbar-color: #38414f transparent;
 }
-
-/* Left column: all groups */
-.vsl-bm-item {
-  padding: 7px 12px;
-  color: var(--input-text, #c0c0c0);
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  user-select: none;
-  transition: background 0.1s;
-}
-.vsl-bm-item:hover { background: var(--comfy-input-bg, #2a2a2a); }
-.vsl-bm-item--selected { background: rgba(74,158,255,0.12); color: #7fbfff; }
-.vsl-bm-item--selected:hover { background: rgba(74,158,255,0.2); }
-.vsl-bm-empty {
-  padding: 20px 14px;
-  color: var(--input-text, #666);
-  font-size: 12px;
-  font-style: italic;
-  white-space: pre-line;
-  line-height: 1.5;
-}
-
-/* Right column: active bookmarks */
-.vsl-bm-row {
+.vsl-bm-tree-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px 6px 4px;
-  color: var(--input-text, #c0c0c0);
-  font-size: 12px;
-  user-select: none;
+  padding: 6px 6px 6px 4px;
+  border-radius: 6px;
 }
-.vsl-bm-row--group { }
-.vsl-bm-row--child {
-  padding-left: 16px;
-  border-left: 2px solid rgba(74,158,255,0.25);
-  margin-left: 4px;
-  font-size: 11px;
-  background: rgba(255,255,255,0.012);
+.vsl-bm-tree-row:hover { background: #262d3a; }
+.vsl-bm-tree-chevron {
+  width: 18px; flex: none;
+  display: inline-flex; justify-content: center;
+  color: #9aa4b2; font-size: 13px; line-height: 1; cursor: pointer;
 }
+.vsl-bm-tree-chevron:hover { color: #dde3ec; }
+.vsl-bm-tree-dot { width: 16px; flex: none; color: #5b6675; text-align: center; font-size: 11px; }
+.vsl-bm-tree-label {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px;
+}
+.vsl-bm-tree-count { flex: none; font-size: 11px; color: #5f6a7a; }
+.vsl-bm-tree-check { flex: none; font-size: 12px; color: #5bbd7b; }
+.vsl-bm-tree-add {
+  flex: none; width: 20px; text-align: center;
+  font-size: 16px; line-height: 1; color: #5f6a7a;
+  cursor: pointer; border-radius: 5px;
+}
+.vsl-bm-tree-add:hover { color: #8fd6a3; background: #233028; }
 
-/* Section header row */
-.vsl-bm-row--section {
-  background: rgba(74,158,255,0.07);
-  border-left: 3px solid rgba(74,158,255,0.5);
-  border-top: 1px solid rgba(255,255,255,0.05);
-  margin-top: 4px;
-  padding-left: 3px;
+/* Right column */
+.vsl-bm-active {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #38414f transparent;
+  position: relative;
 }
-.vsl-bm-row--section:first-child { border-top: none; margin-top: 0; }
+.vsl-bm-empty {
+  padding: 22px 14px;
+  color: #6f7a8a;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.6;
+}
+.vsl-bm-empty--active { padding: 14px 6px; font-size: 13.5px; line-height: 1.7; }
 
-/* Section highlight when drag is over it */
-.vsl-bm-section-over.vsl-bm-row--section {
-  background: rgba(74,158,255,0.18);
-  border-left-color: rgba(74,158,255,0.9);
-  outline: 1px solid rgba(74,158,255,0.4);
-  outline-offset: -1px;
+.vsl-bm-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  margin-bottom: 4px;
+  background: rgba(32,40,52,0.6);
+  border: 1px solid #2b3444;
 }
-.vsl-bm-section-over.vsl-bm-row--child {
-  border-left-color: rgba(74,158,255,0.7);
-  background: rgba(74,158,255,0.08);
+.vsl-bm-card:hover { border-color: #3d4a5e; }
+.vsl-bm-tag {
+  flex: none;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.6px;
+  padding: 3px 7px; border-radius: 4px;
 }
-
-.vsl-bm-row--dragging { opacity: 0.3; }
-
-.vsl-bm-drag-handle {
-  color: var(--input-text, #555);
-  cursor: grab;
-  font-size: 15px;
-  padding: 0 3px;
-  flex-shrink: 0;
-  line-height: 1;
+.vsl-bm-tag--group { color: ${GROUP_COLOR}; background: rgba(147,180,221,0.14); }
+.vsl-bm-tag--node  { color: ${NODE_COLOR}; background: rgba(208,168,92,0.14); }
+.vsl-bm-card-body { flex: 1; min-width: 0; }
+.vsl-bm-card-name {
+  font-size: 13.5px; color: #dde3ec; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.vsl-bm-drag-handle:active { cursor: grabbing; }
-.vsl-bm-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vsl-bm-card-parent {
+  font-size: 11px; color: #6f7a8a; margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .vsl-bm-item-remove {
-  flex-shrink: 0; background: none; border: none;
-  color: var(--input-text, #555); cursor: pointer;
-  font-size: 11px; padding: 2px 6px; border-radius: 3px;
-  transition: background 0.1s, color 0.1s; line-height: 1;
+  flex: none; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 5px;
+  color: #6f7a8a; cursor: pointer; font-size: 15px; line-height: 1;
+  transition: background 0.1s, color 0.1s;
 }
-.vsl-bm-item-remove:hover { background: rgba(255,80,80,0.18); color: #ff7070; }
+.vsl-bm-item-remove:hover { background: #3a2a2d; color: #e08585; }
 
-.vsl-bm-section-icon {
-  flex-shrink: 0;
-  width: 12px; height: 12px;
-  color: rgba(74,158,255,0.6);
-  pointer-events: none; user-select: none;
-  display: flex; align-items: center;
+/* Section row (right column) */
+.vsl-bm-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 4px 4px;
 }
-.vsl-bm-section-label {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.07em; color: #7fbfff;
+.vsl-bm-sec-label {
+  flex: 0 1 auto;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1px;
+  color: #7a8598; text-transform: uppercase;
   outline: none; border-radius: 3px; padding: 1px 3px;
   cursor: text; min-width: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;
 }
-.vsl-bm-section-label:focus {
-  background: rgba(74,158,255,0.15); color: #b0d8ff;
-  white-space: normal; overflow: visible;
-}
+.vsl-bm-sec-label:focus { background: rgba(63,111,181,0.2); color: #cdd9ec; white-space: normal; }
+.vsl-bm-sec-line { flex: 1; height: 1px; background: #333b47; }
 
-/* Drop indicator line */
+.vsl-bm-drag-handle {
+  flex: none;
+  color: #4a5568; cursor: grab;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+}
+.vsl-bm-drag-handle:active { cursor: grabbing; }
+
+.vsl-bm-row--dragging { opacity: 0.3; }
+.vsl-bm-drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 99999;
+  opacity: 0.9;
+  background: #232b38;
+  border: 1px solid rgba(63,111,181,0.6);
+  border-radius: 7px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px;
+}
 .vsl-bm-drop-indicator {
   height: 2px;
-  background: #4a9eff;
+  background: ${ACCENT};
   border-radius: 1px;
-  margin: 1px 4px;
+  margin: 2px 4px;
   position: relative;
   pointer-events: none;
 }
 .vsl-bm-drop-indicator::before {
   content: "";
-  position: absolute;
-  left: -3px; top: -3px;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: #4a9eff;
-}
-
-/* Floating drag ghost */
-.vsl-bm-drag-ghost {
-  position: fixed;
-  pointer-events: none;
-  z-index: 99999;
-  opacity: 0.85;
-  background: var(--comfy-input-bg, #2a2a2a);
-  border: 1px solid rgba(74,158,255,0.5);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  padding: 4px 0;
+  position: absolute; left: -3px; top: -3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: ${ACCENT};
 }
 
 /* Footer */
 .vsl-bm-footer {
-  padding: 11px 16px;
-  border-top: 1px solid var(--border-color, #3d3d3d);
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  background: rgba(255,255,255,0.015);
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-top: 1px solid #333b47;
+  background: #1a2029;
   flex-shrink: 0;
 }
 .vsl-bm-btn-add-section {
-  background: none; border: 1px solid var(--border-color, #444);
-  color: var(--input-text, #999); border-radius: 5px;
-  padding: 6px 13px; font-size: 12px; cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  background: transparent;
+  border: 1px solid #3d4756;
+  color: #b8c0cc;
+  padding: 8px 14px;
+  border-radius: 7px;
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
 }
-.vsl-bm-btn-add-section:hover { background: rgba(255,255,255,0.06); color: #d0d0d0; border-color: #666; }
+.vsl-bm-btn-add-section:hover { background: #262d3a; border-color: #4a5568; }
 .vsl-bm-btn-confirm {
-  background: #4a9eff; color: #fff; border: none; border-radius: 5px;
-  padding: 7px 22px; font-size: 13px; font-weight: 600; cursor: pointer;
-  transition: background 0.15s;
+  background: ${ACCENT};
+  border: none;
+  color: #fff;
+  padding: 8px 22px;
+  border-radius: 7px;
+  font-size: 13.5px; font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.15s;
 }
-.vsl-bm-btn-confirm:hover { background: #3a8ef0; }
-.vsl-bm-btn-confirm:active { background: #2a7ee0; }
+.vsl-bm-btn-confirm:hover { filter: brightness(1.12); }
+.vsl-bm-btn-confirm:active { filter: brightness(0.95); }
 `;
 
 // ── extension ─────────────────────────────────────────────────────────────────
@@ -1098,7 +1201,10 @@ app.registerExtension({
     const origRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function (...args) {
       const r = origRemoved?.apply(this, args);
-      bookmarkPanel?.update();
+      // onRemoved fires BEFORE the node is spliced out of graph._nodes, so
+      // defer the refresh until after removal — otherwise getBookmarkNodes()
+      // still counts this node and the panel wouldn't hide.
+      setTimeout(() => bookmarkPanel?.update(), 50);
       return r;
     };
   },

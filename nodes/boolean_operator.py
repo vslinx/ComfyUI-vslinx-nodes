@@ -100,15 +100,37 @@ class VSLinx_BooleanFlip:
     def compute(self, boolean):
         return (not self._as_bool(boolean),)
 
+class VSLinx_IntToBool:
+    DESCRIPTION = "Outputs True if the input value is greater than or equal to the threshold, otherwise False."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "value": ("INT", {"default": 0}),
+                "threshold": ("INT", {"default": 1}),
+            },
+        }
+
+    RETURN_TYPES = ("BOOLEAN",)
+    RETURN_NAMES = ("boolean",)
+    FUNCTION = "compute"
+    CATEGORY = "vsLinx/boolean"
+
+    def compute(self, value, threshold):
+        return (value >= threshold,)
+
 
 NODE_CLASS_MAPPINGS = {
     "vsLinx_BooleanAndOperator": VSLinx_BooleanAndOperator,
     "vsLinx_BooleanOrOperator": VSLinx_BooleanOrOperator,
     "vsLinx_BooleanFlip": VSLinx_BooleanFlip,
+    "vsLinx_IntToBool": VSLinx_IntToBool,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "vsLinx_BooleanAndOperator": "Boolean AND Operator",
     "vsLinx_BooleanOrOperator": "Boolean OR Operator",
     "vsLinx_BooleanFlip": "Boolean Flip",
+    "vsLinx_IntToBool": "Int to Bool (Threshold)",
 }
