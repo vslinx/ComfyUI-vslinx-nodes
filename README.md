@@ -104,6 +104,9 @@ Just like the AND Operator it provides a node with 2 boolean inputs. Outputs Tru
 #### Boolean Flip
 Flips the input value: True → False, False → True. Useful for inverting conditions.
 
+#### Int to Bool (Threshold)
+Converts an integer into a boolean using a threshold. Outputs True if the input ``value`` is greater than or equal to ``threshold``, otherwise False. With the default ``threshold`` of 1 this behaves like a classic "1 or above → True" check, but the threshold field lets you gate on any cutoff you like.
+
 ### Utility
 #### Forward/Bypass on Boolean (Any)
 This node accepts any input type and forwards it unchanged. Its pass-through behavior can be controlled with the built-in boolean switch or by linking an external boolean node. This allows you to create conditional branches in your workflow. The bypass state is applied instantly in the UI, without waiting for workflow execution. <br>
@@ -121,10 +124,10 @@ Two toggles fine-tune the behavior:
 - **``Ignore subgraph boundary``** - when enabled, the trigger lookup crosses subgraph boundaries (both inbound and outbound) until it reaches a real node, instead of stopping at the boundary. When disabled, only the node directly wired into ``trigger`` in the same graph is read.
 - **``Mirror this node's own bypass/mute``** - when enabled, this node also mirrors its **own** bypass/mute state onto the downstream node(s), taking precedence over the trigger. Handy for chaining, so bypassing/muting this node propagates that state onward.
 
-#### Group Bookmarks
-A UI-only node that adds a collapsible side panel on the right edge of the ComfyUI canvas, listing bookmarked workflow groups. Clicking a bookmark entry centers the canvas on that group and zooms to fit it into view.
+#### Bookmarks
+A UI-only node that adds a collapsible side panel on the right edge of the ComfyUI canvas, listing your bookmarks. You can bookmark **whole groups** as well as **individual nodes**. Clicking a group bookmark centers the canvas on that group and zooms to fit it into view; clicking a node bookmark centers on and selects that node.
 
-Click **"Manage Bookmarks"** on the node to open the bookmark manager. The left column shows all groups present in the workflow; clicking one adds or removes it from your active bookmarks on the right. Bookmarks can be organized into named, collapsible **sections** using the **"+ Add Section"** button - drag and drop items in the right column to reorder them or move groups into or out of sections. Sections themselves can also be reordered by dragging.
+Click **"Manage Bookmarks"** on the node to open the bookmark manager. The left column is a searchable **Groups & Nodes** tree: click a group name to bookmark the whole group, or click the arrow (▸) to expand it and bookmark a single node inside. Nodes that aren't in any group are listed at the bottom under **Ungrouped nodes**. The right column shows your active bookmarks, each tagged **GROUP** or **NODE**; drag the handle (⠿) to reorder them. Bookmarks can be organized into named, collapsible **sections** using the **"+ Add Section"** button — any bookmark dragged below a section header belongs to it.
 
 The side panel can be toggled open and closed via an arrow tab on the right edge of the canvas. Panel visibility, section collapsed state, and the full bookmark list are persisted with the workflow.
 
@@ -207,6 +210,10 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.16.0
+- added new ``Int to Bool (Threshold)``-Node in the ``vsLinx/boolean`` group. Like a classic int-to-bool conversion, but with a ``threshold`` field: it outputs True when the input ``value`` is greater than or equal to ``threshold`` (default 1, so 1-or-above → True) and False otherwise, letting you gate on any cutoff instead of only ``>= 1``.
+- reworked the ``Group Bookmarks`` node into a general ``Bookmarks`` node (renamed; the node identifier is unchanged, so existing workflows keep working). You can now bookmark **individual nodes** in addition to whole groups: the redesigned "Manage Bookmarks" modal shows a searchable **Groups & Nodes** tree where each group can be expanded (▸) to reveal and bookmark the nodes inside it, with ungrouped nodes listed at the bottom. Active bookmarks are tagged **GROUP**/**NODE**, stay reorderable by drag, and clicking a node bookmark in the side panel jumps to and selects that node. Old group-only bookmarks (including sections) are migrated automatically.
+
 ### v.1.15.1
 - fixed ``MultiDiffusion Tiled Hires Fix`` throwing ``AttributeError: 'CustomVAE' object has no attribute 'format_encoded'`` (or ``handles_tiling``) after updating to ComfyUI 0.27.0. That release added new attributes to ComfyUI's base VAE that out-of-date custom-VAE packs (e.g. [ComfyUI-VAE-Utils](https://github.com/spacepxl/ComfyUI-VAE-Utils), whose ``CustomVAE`` copies an older VAE init and never calls ``super().__init__()``) don't set, so encoding/decoding through them raised an error. The node now back-fills only the missing attributes with ComfyUI's own defaults before use; up-to-date VAEs are left untouched.
 
