@@ -210,6 +210,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.16.1
+- fixed ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` ignoring the bypass/mute state of upstream boolean nodes: a muted or bypassed source (e.g. one of the two inputs of a ``Boolean AND Operator``) is now read as False / passed through like ComfyUI does at execution time, so the toggled downstream node matches what the workflow actually computes.
+
 ### v.1.16.0
 - added new ``Int to Bool (Threshold)``-Node in the ``vsLinx/boolean`` group. Like a classic int-to-bool conversion, but with a ``threshold`` field: it outputs True when the input ``value`` is greater than or equal to ``threshold`` (default 1, so 1-or-above → True) and False otherwise, letting you gate on any cutoff instead of only ``>= 1``.
 - reworked the ``Group Bookmarks`` node into a general ``Bookmarks`` node (renamed; the node identifier is unchanged, so existing workflows keep working). You can now bookmark **individual nodes** in addition to whole groups: the redesigned "Manage Bookmarks" modal shows a searchable **Groups & Nodes** tree where each group can be expanded (▸) to reveal and bookmark the nodes inside it, with ungrouped nodes listed at the bottom. Active bookmarks are tagged **GROUP**/**NODE**, stay reorderable by drag, and clicking a node bookmark in the side panel jumps to and selects that node. Old group-only bookmarks (including sections) are migrated automatically.
