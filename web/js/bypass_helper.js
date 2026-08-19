@@ -255,6 +255,30 @@ function findParentNode(subgraph) {
   return search(app.graph);
 }
 
+// Litegraph type strings match loosely: "*" is a wildcard on either side and
+// comparison is case-insensitive (BOOLEAN vs boolean).
+function typesMatch(a, b) {
+  if (!a || !b) return true;
+  const ta = String(a).toUpperCase();
+  const tb = String(b).toUpperCase();
+  return ta === "*" || tb === "*" || ta === tb;
+}
+
+// Emulate ComfyUI's BYPASS pass-through: an output of type T is fed by the
+// first input of the same type. If no matching input exists (or it isn't
+// connected) the node emits None, which the backend evaluates as False.
+function resolveBypassPassthrough(graph, src, originSlot, seen) {
+  const outType = src.outputs?.[originSlot]?.type;
+  for (const inp of (src.inputs || [])) {
+    if (!typesMatch(inp.type, outType)) continue;
+    const lid = inp.link ?? (inp.links?.[0] ?? null);
+    if (lid == null) return false;
+    const v = resolveBooleanAtLink(graph, lid, new Set(seen));
+    return (v == null) ? null : !!v;
+  }
+  return false;
+}
+
 function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
   const link = graph?.links?.[linkId];
   if (!link) return null;
@@ -275,6 +299,14 @@ function resolveBooleanAtLink(graph, linkId, seen = new Set()) {
   const key = `${src.id}:${link.origin_slot}`;
   if (seen.has(key)) return null;
   seen.add(key);
+
+  // 0. Muted / bypassed source: the node never produces a value, so reading its
+  //    widget or walking its inputs would report a state the backend never sees.
+  //    MUTE emits nothing (treated as False here, matching what downstream
+  //    boolean nodes evaluate); BYPASS forwards a same-typed input instead.
+  const srcMode = src.mode ?? MODE_ALWAYS;
+  if (srcMode === MODE_NEVER) return false;
+  if (srcMode === MODE_BYPASS) return resolveBypassPassthrough(graph, src, link.origin_slot, seen);
 
   // 1. Known vsLinx logic nodes (AND / OR / Flip)
   const evalFn = BOOLEAN_NODE_EVAL[src.type];
