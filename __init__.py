@@ -24,6 +24,7 @@ node_list = [
     "vae_decode_batched",
     "anima_lllite_tiled_sampler",
     "multidiffusion_tiled_hires",
+    "better_image_preview",
 ]
 
 NODE_CLASS_MAPPINGS = {}

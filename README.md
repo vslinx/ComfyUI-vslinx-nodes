@@ -1,5 +1,5 @@
 # ComfyUI-vslinx-nodes
-Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-select dialog as a batch or list, or load the last generated image from the output folder with auto-refresh; fit an image inside a mask’s bounding box for compositing poses, objects, or decals; convert images to pixel art with retro palettes (GameBoy, CGA, NES, Pico-8); upscale to any exact scale factor using an upscale model (nearest/bilinear/area/Lanczos); decode latents in adjustable batch sizes via batched VAE Decode and VAE Decode (Tiled) to cut peak VRAM; an interactive detailer (Impact-Pack) that pauses for a per-segment prompt dialog; boolean AND/OR/flip plus nodes that bypass or mute downstream nodes from a boolean or by following another node’s bypass/mute state for easy workflow branching; pack and unpack up to 5 values through a single pipe wire (Any to Pipe / Pipe to Any) to declutter large graphs; bookmark and jump to workflow groups from a side panel; multiline wildcard text input with dropdown for Impact-Pack; and append LoRA info from rgthree Power LoRA Loader into image metadata. Also includes settings to show hover previews for all models & LoRAs across all model loaders - compatible with rgthree’s subdirectory view - and a global fix for “Return type mismatch” errors caused by custom nodes like RES4LYF that extend combo lists such as schedulers.
+Custom ComfyUI nodes to streamline workflows: load multiple images via a multi-select dialog as a batch or list, or load the last generated image from the output folder with auto-refresh; preview images in a grid or in-node full view with open-in-new-tab buttons; fit an image inside a mask’s bounding box for compositing poses, objects, or decals; convert images to pixel art with retro palettes (GameBoy, CGA, NES, Pico-8); upscale to any exact scale factor using an upscale model (nearest/bilinear/area/Lanczos); decode latents in adjustable batch sizes via batched VAE Decode and VAE Decode (Tiled) to cut peak VRAM; an interactive detailer (Impact-Pack) that pauses for a per-segment prompt dialog; boolean AND/OR/flip plus nodes that bypass or mute downstream nodes from a boolean or by following another node’s bypass/mute state for easy workflow branching; pack and unpack up to 5 values through a single pipe wire (Any to Pipe / Pipe to Any) to declutter large graphs; bookmark and jump to workflow groups from a side panel; multiline wildcard text input with dropdown for Impact-Pack; and append LoRA info from rgthree Power LoRA Loader into image metadata. Also includes settings to show hover previews for all models & LoRAs across all model loaders - compatible with rgthree’s subdirectory view - and a global fix for “Return type mismatch” errors caused by custom nodes like RES4LYF that extend combo lists such as schedulers.
 
 ## How to Install
 ### **Recommended**
@@ -92,6 +92,11 @@ This node loads an image from your ``output`` folder and serves as a replacement
 The node supports the **MaskEditor** (right-click → "Open in MaskEditor"). Painted masks are preserved across workflow executions, tab switches, and page reloads. If no image is available or the selected file was deleted, the node outputs a 512×512 black image to prevent blocking your workflow.
 
 A ``include_subfolders`` property (right-click → Properties) controls whether images from subfolders inside the ``output`` directory are included in the dropdown and refresh functions.
+
+#### Better Image Preview
+Works like ComfyUI's built-in **Preview Image** node, with a few quality-of-life additions. Multiple images are shown in a square grid; hovering an image reveals buttons to view it inside the node or open it in a new browser tab. The in-node full view lets you flip through the images with arrows, a thumbnail strip or the ``←``/``→`` keys (``Esc`` returns to the grid), and has its own ``Open`` button. A single image is shown directly in the full view. Unlike the built-in node, the images are also passed through as an ``images`` output.
+
+A ``show_buttons`` property (right-click → Properties) controls whether the grid buttons appear ``On hover`` (default) or ``Always``.
 
 ### Boolean
 #### Boolean AND Operator
@@ -210,6 +215,9 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.17.0
+- added new ``Better Image Preview``-Node in the ``vsLinx/image`` group. Previews images like the built-in Preview Image node, but shows multiple images in a grid with hover buttons to view an image inside the node or open it in a new tab, plus an in-node full view with arrows, a thumbnail strip and ``←``/``→``/``Esc`` keyboard navigation. It also outputs the images, so it can sit in the middle of a workflow. A ``show_buttons`` property switches the grid buttons between ``On hover`` and ``Always``.
+
 ### v.1.16.1
 - fixed ``Forward/Bypass on Boolean (Any)`` and ``Forward/Mute on Boolean (Any)`` ignoring the bypass/mute state of upstream boolean nodes: a muted or bypassed source (e.g. one of the two inputs of a ``Boolean AND Operator``) is now read as False / passed through like ComfyUI does at execution time, so the toggled downstream node matches what the workflow actually computes.
 
