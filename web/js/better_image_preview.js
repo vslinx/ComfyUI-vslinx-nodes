@@ -9,8 +9,6 @@ const ICON_GRID = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" s
 const ICON_PREV = `<svg width="10" height="12" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 1L2 6l5 5"/></svg>`;
 const ICON_NEXT = `<svg width="10" height="12" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 1l5 5-5 5"/></svg>`;
 
-const GRID_GAP = 4;
-
 const viewURL = (ref, preview = false) => {
   const params = new URLSearchParams({ filename: ref.filename, type: ref.type ?? "temp", subfolder: ref.subfolder ?? "" });
   return api.apiURL(`/view?${params.toString()}${preview ? app.getPreviewFormatParam() : ""}`);
@@ -67,18 +65,25 @@ app.registerExtension({
     };
 
     /* ── grid view ── */
-    const layoutGrid = (g) => {
-      const grid = g.grid;
-      if (!grid) return;
+    /* Same layout as the built-in preview: pick the column count that shows the
+       most image area, never scaling an image above its natural size. */
+    const layoutGrid = (node) => {
+      const g = node._vslGallery;
+      const first = node.imgs?.[0];
+      if (!g.grid || !first?.naturalWidth) return;
+      const { naturalWidth: w, naturalHeight: h } = first;
       const n = g.images.length;
-      const cols = Math.ceil(Math.sqrt(n));
-      const rows = Math.ceil(n / cols);
-      const w = (grid.clientWidth - (cols - 1) * GRID_GAP) / cols;
-      const h = (grid.clientHeight - (rows - 1) * GRID_GAP) / rows;
-      const cell = Math.max(16, Math.floor(Math.min(w, h)));
-      grid.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
-      grid.style.gridAutoRows = `${cell}px`;
-      grid.classList.toggle("vsl-bip-small", cell < 70);
+      let best = null;
+      for (let cols = 1; cols <= n; cols++) {
+        const rows = Math.ceil(n / cols);
+        const scale = Math.min(g.grid.clientWidth / cols / w, g.grid.clientHeight / rows / h, 1);
+        if (!best || scale > best.scale) best = { cols, scale };
+      }
+      const cw = Math.floor(w * best.scale);
+      const ch = Math.floor(h * best.scale);
+      g.grid.style.gridTemplateColumns = `repeat(${best.cols}, ${cw}px)`;
+      g.grid.style.gridAutoRows = `${ch}px`;
+      g.grid.classList.toggle("vsl-bip-small", Math.min(cw, ch) < 70);
     };
 
     const renderGrid = (node) => {
@@ -99,10 +104,12 @@ app.registerExtension({
         );
         cell.append(img, actions);
         cell.addEventListener("click", () => showFull(node, i));
+        cell.addEventListener("mouseenter", () => { node.overIndex = i; });
+        cell.addEventListener("mouseleave", () => { node.overIndex = null; });
         g.grid.appendChild(cell);
       });
       g.root.appendChild(g.grid);
-      layoutGrid(g);
+      layoutGrid(node);
     };
 
     /* ── full view ── */
@@ -149,6 +156,7 @@ app.registerExtension({
       const g = node._vslGallery;
       const n = g.images.length;
       g.index = Math.max(0, Math.min(index, n - 1));
+      node.imageIndex = g.index;
       if (!g.full) buildFull(node);
 
       const { position, img, strip } = g.full;
@@ -164,6 +172,7 @@ app.registerExtension({
     const showGrid = (node) => {
       const g = node._vslGallery;
       g.index = -1;
+      node.imageIndex = null;
       renderGrid(node);
     };
 
@@ -178,15 +187,22 @@ app.registerExtension({
       g.images = images ?? [];
       g.full = null;
       g.grid = null;
+      node.overIndex = null;
+      node.imgs = g.images.map((ref) => {
+        const img = new Image();
+        img.src = viewURL(ref, true);
+        return img;
+      });
+      node.imgs[0]?.addEventListener("load", () => layoutGrid(node));
       if (!g.images.length) {
         g.index = -1;
+        node.imageIndex = null;
         g.root.replaceChildren();
       } else if (g.images.length === 1) {
         showFull(node, 0);
-      } else if (g.index >= 0) {
-        showFull(node, g.index);
       } else {
-        renderGrid(node);
+        // New images always start in the grid, like the built-in preview.
+        showGrid(node);
       }
     };
 
@@ -204,7 +220,24 @@ app.registerExtension({
       this.addDOMWidget("gallery", "vslinx_gallery", root, { serialize: false, getMinHeight: () => 140 });
       applyButtonMode(this);
 
-      this._vslResize = new ResizeObserver(() => layoutGrid(this._vslGallery));
+      // Show ComfyUI's node menu (incl. Open/Copy/Save Image) instead of the browser's.
+      root.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        [e.canvasX, e.canvasY] = app.canvas.convertEventToCanvasOffset(e);
+        app.canvas.processContextMenu(this, e);
+      });
+
+      // Hand middle-button drags to the canvas so panning works over the images too.
+      const forwardMiddle = (e) => {
+        if (e.type === "pointermove" ? !(e.buttons & 4) : e.button !== 1) return;
+        e.preventDefault();
+        e.stopPropagation();
+        app.canvas.canvas.dispatchEvent(new PointerEvent(e.type, e));
+      };
+      for (const type of ["pointerdown", "pointermove", "pointerup"]) root.addEventListener(type, forwardMiddle);
+
+      this._vslResize = new ResizeObserver(() => layoutGrid(this));
       this._vslResize.observe(root);
 
       const [w, h] = this.size;
@@ -225,10 +258,10 @@ app.registerExtension({
     const origKeyDown = nodeType.prototype.onKeyDown;
     nodeType.prototype.onKeyDown = function (e) {
       const g = this._vslGallery;
-      if (g?.full && g.images.length > 1) {
+      if (g?.images.length && ["Escape", "ArrowRight", "ArrowLeft"].includes(e.key)) {
+        if (!g.full || g.images.length < 2) return;
         if (e.key === "Escape") return showGrid(this);
-        if (e.key === "ArrowRight") return step(this, 1);
-        if (e.key === "ArrowLeft") return step(this, -1);
+        return step(this, e.key === "ArrowRight" ? 1 : -1);
       }
       return origKeyDown?.apply(this, arguments);
     };
@@ -290,18 +323,15 @@ const CSS = `
   flex: 1;
   min-height: 0;
   display: grid;
-  gap: ${GRID_GAP}px;
   justify-content: center;
   align-content: start;
 }
 .vsl-bip-cell {
   position: relative;
-  background: #1e1e21;
-  border-radius: 4px;
   overflow: hidden;
   cursor: zoom-in;
 }
-.vsl-bip-cell img { object-fit: cover; }
+.vsl-bip-cell img { object-fit: contain; }
 .vsl-bip-actions {
   position: absolute;
   top: 6px;
@@ -359,8 +389,6 @@ const CSS = `
   position: relative;
   flex: 1;
   min-height: 0;
-  background: #1e1e21;
-  border-radius: 4px;
   overflow: hidden;
 }
 .vsl-bip-stage img { object-fit: contain; }
