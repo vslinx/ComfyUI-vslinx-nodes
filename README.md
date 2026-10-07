@@ -94,7 +94,7 @@ The node supports the **MaskEditor** (right-click → "Open in MaskEditor"). Pai
 A ``include_subfolders`` property (right-click → Properties) controls whether images from subfolders inside the ``output`` directory are included in the dropdown and refresh functions.
 
 #### Better Image Preview
-Works like ComfyUI's built-in **Preview Image** node, with a few quality-of-life additions. Multiple images are shown in a square grid; hovering an image reveals buttons to view it inside the node or open it in a new browser tab. The in-node full view lets you flip through the images with arrows, a thumbnail strip or the ``←``/``→`` keys (``Esc`` returns to the grid), and has its own ``Open`` button. A single image is shown directly in the full view. Unlike the built-in node, the images are also passed through as an ``images`` output.
+Works like ComfyUI's built-in **Preview Image** node, with a few quality-of-life additions. Multiple images are laid out like in the built-in node (as large as possible for the node size); hovering an image reveals buttons to view it inside the node or open it in a new browser tab. The in-node full view lets you flip through the images with arrows, a thumbnail strip or the ``←``/``→`` keys (``Esc`` returns to the grid), and has its own ``Open`` button. A single image is shown directly in the full view. Unlike the built-in node, the images are also passed through as an ``images`` output.
 
 A ``show_buttons`` property (right-click → Properties) controls whether the grid buttons appear ``On hover`` (default) or ``Always``.
 
@@ -222,6 +222,12 @@ You can find an example workflow [here](https://github.com/user-attachments/asse
 <img width="512" height="512" src="https://github.com/user-attachments/assets/8c4d8a46-42e9-4da0-ab72-7d00b5bd7d8f"/>
 
 ## Changelog
+### v.1.17.1
+- ``Better Image Preview`` now lays out multiple images like the built-in Preview Image node, picking the column count that shows them as large as possible instead of always using small square tiles. The dark background behind the images was removed.
+- right-clicking the images of ``Better Image Preview`` now opens ComfyUI's node menu (including Open/Copy/Save Image for the hovered or shown image) instead of the browser's context menu.
+- holding the middle mouse button over the images of ``Better Image Preview`` now pans the canvas like everywhere else, instead of triggering the browser's middle-click action.
+- ``Better Image Preview`` now switches back to the grid view when new images arrive, like the built-in node, instead of staying in the full view on the previous position.
+
 ### v.1.17.0
 - added new ``Better Image Preview``-Node in the ``vsLinx/image`` group. Previews images like the built-in Preview Image node, but shows multiple images in a grid with hover buttons to view an image inside the node or open it in a new tab, plus an in-node full view with arrows, a thumbnail strip and ``←``/``→``/``Esc`` keyboard navigation. It also outputs the images, so it can sit in the middle of a workflow. A ``show_buttons`` property switches the grid buttons between ``On hover`` and ``Always``.
 - added new ``Image Filter``-Node in the ``vsLinx/image`` group. Pauses the workflow and lets you pick which images of a batch to continue with in a full-screen dialog (grid + large view, All/None/Invert, countdown, keyboard shortcuts). Passes on only the selected images and optional latents/masks in click order; accepts a single image, a batch or an image list (with mixed image sizes). Includes ``timeout``/``on_timeout``, ``on_single`` (pass a single image through without asking) and an ``on_none`` property to either stop the whole run or only the downstream branch when nothing is selected. Inspired by cg-image-filter's Image Filter node, without sound or video/audio support.
